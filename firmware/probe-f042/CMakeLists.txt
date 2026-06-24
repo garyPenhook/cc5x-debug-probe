@@ -8,6 +8,15 @@ project(probe_f042 C ASM)
 
 set(CMAKE_C_STANDARD 11)
 
+# Emit compile_commands.json for clang-tidy / IDEs (see .clang-tidy).
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Warning set shared by every target we own (vendor/ sources are excluded).
+# Not -Werror: warnings guide, they don't gate the build. CI runs the static
+# analyzers (cppcheck/clang-tidy) for the harder gate.
+set(PROBE_WARNINGS -Wall -Wextra -Wshadow -Wundef -Wpointer-arith
+    -Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Wdouble-promotion)
+
 # ---------------------------------------------------------------------------
 # Host build (no ARM toolchain) -> portable unit tests only.
 # ---------------------------------------------------------------------------
@@ -15,20 +24,38 @@ if(NOT CMAKE_CROSSCOMPILING)
     enable_testing()
     add_executable(test_relay tests/test_relay.c src/relay.c)
     target_include_directories(test_relay PRIVATE src)
-    target_compile_options(test_relay PRIVATE -Wall -Wextra)
+    target_compile_options(test_relay PRIVATE ${PROBE_WARNINGS})
     add_test(NAME relay COMMAND test_relay)
 
     # USB-CDC descriptors are pure data (no CMSIS) -> host-testable like relay.
     add_executable(test_usb_desc tests/test_usb_desc.c src/usb_desc.c)
     target_include_directories(test_usb_desc PRIVATE src)
-    target_compile_options(test_usb_desc PRIVATE -Wall -Wextra)
+    target_compile_options(test_usb_desc PRIVATE ${PROBE_WARNINGS})
     add_test(NAME usb_desc COMMAND test_usb_desc)
 
     # USB control-request resolver is pure logic (no CMSIS) -> host-testable.
     add_executable(test_usb_ctrl tests/test_usb_ctrl.c src/usb_ctrl.c src/usb_desc.c)
     target_include_directories(test_usb_ctrl PRIVATE src)
-    target_compile_options(test_usb_ctrl PRIVATE -Wall -Wextra)
+    target_compile_options(test_usb_ctrl PRIVATE ${PROBE_WARNINGS})
     add_test(NAME usb_ctrl COMMAND test_usb_ctrl)
+
+    # Static analysis target: `cmake --build build-tests --target cppcheck`.
+    # Analyses our src/ only. Mirrors the CI suppressions: unusedFunction fires
+    # on the cross-TU firmware API, missingInclude on CMSIS we don't ship here.
+    find_program(CPPCHECK_EXE NAMES cppcheck)
+    if(CPPCHECK_EXE)
+        add_custom_target(cppcheck
+            COMMAND ${CPPCHECK_EXE}
+                --enable=warning,style,performance,portability
+                --inline-suppr --error-exitcode=1 --quiet
+                --suppress=unusedFunction --suppress=missingIncludeSystem
+                --suppress=missingInclude
+                --std=c11 -I ${CMAKE_SOURCE_DIR}/src
+                ${CMAKE_SOURCE_DIR}/src
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            COMMENT "Running cppcheck on src/"
+            VERBATIM)
+    endif()
     return()
 endif()
 
@@ -62,6 +89,7 @@ if(EXISTS ${STARTUP_SRC} AND EXISTS ${LINKER_SCRIPT})
         src
         ${VENDOR_DIR}/CMSIS/Device/ST/STM32F0xx/Include
         ${VENDOR_DIR}/CMSIS/Include)
+    target_compile_options(probe_f042.elf PRIVATE ${PROBE_WARNINGS})
     target_compile_definitions(probe_f042.elf PRIVATE STM32F042x6
         PROBE_PC_TRANSPORT=PROBE_PC_TRANSPORT_${PROBE_PC_TRANSPORT})
     target_link_options(probe_f042.elf PRIVATE -T${LINKER_SCRIPT} -Wl,-Map=probe_f042.map)

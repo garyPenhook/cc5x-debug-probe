@@ -1,0 +1,23 @@
+# clang-format config for the F042 probe firmware.
+# Matches the existing hand-written style: 4-space indent, Linux brace style
+# (function/struct opening brace on its own line; control-statement braces on
+# the same line), ~100-column lines, spaces never tabs.
+---
+Language: Cpp
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+BreakBeforeBraces: Linux
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+PointerAlignment: Right
+AlignConsecutiveMacros: AcrossComments
+SpaceBeforeParens: ControlStatements
+SortIncludes: false
+KeepEmptyLinesAtTheStartOfBlocks: false
+# Existing code nests #if/#include under the outer directive ("#  if"); keep it.
+IndentPPDirectives: AfterHash
+AlignTrailingComments: true

@@ -62,6 +62,30 @@ control-request resolver: descriptor selection + wLength cap + ZLP rule,
 SET_ADDRESS, SET_CONFIGURATION 0/1/invalid, GET_STATUS, class requests). The
 register-level USB sequencing in `usb_cdc.c` stays bench-gated.
 
+## Linting & static analysis
+All tools are free/open-source; CI (`.github/workflows/ci.yml`) runs them on
+every push/PR, and `.pre-commit-config.yaml` runs the fast ones locally
+(`pip install pre-commit && pre-commit install`).
+
+| Tool | Scope | How to run |
+|---|---|---|
+| compiler warnings | `src/` (host + cross) | built in — `PROBE_WARNINGS` in `CMakeLists.txt` |
+| **cppcheck** | `src/` C | `cmake --build build-tests --target cppcheck` |
+| **clang-tidy** | portable C (`relay`/`usb_desc`/`usb_ctrl`) | `clang-tidy -p build-tests src/relay.c …` (config: `.clang-tidy`) |
+| **ruff** | `tools/` Python (lint) | `ruff check .` (config: `pyproject.toml`) |
+| **mypy** | `tools/` Python (types) | `mypy tools` |
+| **codespell** | code + docs | `codespell` |
+
+### Formatting (opt-in)
+Formatting is **not** a CI gate — the register/descriptor tables and the Python
+tool's comments are hand-aligned on purpose. The configs exist
+(`.clang-format`, `[tool.ruff]`) so you can format **changed lines** on demand:
+
+```
+git clang-format                                   # C: only your staged diff
+pre-commit run ruff-format --hook-stage manual     # Python: ruff/Black style
+```
+
 ## Build (firmware)
 ```
 cmake --preset firmware-vcp        # VCP (P5a, default)  -> build-vcp/
