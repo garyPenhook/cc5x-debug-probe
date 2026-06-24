@@ -62,3 +62,8 @@ dkms.conf
 # these once vendor/ is populated.
 /STM32CubeF0-master/
 /STM32CubeF0-master.zip
+
+# STM32 / ST vendor reference docs (datasheets, reference/programming manuals,
+# app notes, errata, Nucleo board docs). Kept locally for reference but not
+# tracked - they bloat the repo and are freely available from st.com.
+*.pdf
