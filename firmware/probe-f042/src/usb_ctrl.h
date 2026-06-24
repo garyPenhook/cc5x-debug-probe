@@ -34,9 +34,13 @@ typedef struct {
 /* Resolve a standard or class SETUP packet. `configured` is the current
  * configured flag (for GET_CONFIGURATION). `scratch`/`scratch_len` is caller
  * storage that may back the returned data (string + 1-byte replies); it must
- * outlive the resulting transfer. */
+ * outlive the resulting transfer. `line_coding` points at the caller-owned
+ * 7-byte CDC line coding (USB_CDC_LINE_CODING_LEN): GET_LINE_CODING returns it
+ * verbatim, and SET_LINE_CODING's OUT payload is captured into it by the caller
+ * — the resolver stays stateless. It must also outlive the transfer. */
 usb_ctrl_resp usb_ctrl_resolve(const uint8_t setup[8], uint8_t configured,
-                               uint8_t *scratch, size_t scratch_len);
+                               uint8_t *scratch, size_t scratch_len,
+                               const uint8_t *line_coding);
 
 /* Exposed for testing: the control-IN terminating-ZLP rule. A ZLP is needed
  * only when fewer bytes than requested are returned AND that count is a nonzero

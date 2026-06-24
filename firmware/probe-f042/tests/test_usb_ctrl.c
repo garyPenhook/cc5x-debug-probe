@@ -14,6 +14,11 @@ static int fail(const char *m) { printf("  FAIL: %s\n", m); return 1; }
 
 static uint8_t g_scratch[64];
 
+/* The caller-owned line coding the resolver echoes (default 115200 8N1, as
+ * usb_cdc.c seeds it — same shared constant). test_line_coding rewrites it to
+ * verify GET reflects the live bytes. */
+static uint8_t g_line_coding[USB_CDC_LINE_CODING_LEN] = USB_CDC_LINE_CODING_DEFAULT;
+
 /* Build a SETUP packet. */
 static void mk(uint8_t s[8], uint8_t bmReq, uint8_t bReq,
               uint16_t wValue, uint16_t wIndex, uint16_t wLength)
@@ -29,7 +34,7 @@ static usb_ctrl_resp resolve(uint8_t bmReq, uint8_t bReq, uint16_t wValue,
 {
     uint8_t s[8];
     mk(s, bmReq, bReq, wValue, wIndex, wLength);
-    return usb_ctrl_resolve(s, cfg, g_scratch, sizeof g_scratch);
+    return usb_ctrl_resolve(s, cfg, g_scratch, sizeof g_scratch, g_line_coding);
 }
 
 #define GET_DESC 0x06u
@@ -167,6 +172,38 @@ static int test_class_requests(void)
     return 0;
 }
 
+/* GET_LINE_CODING must echo the caller-owned line-coding buffer (the device's
+ * last SET_LINE_CODING), not a hard-coded constant. Capturing the SET payload
+ * into that buffer is the caller's (usb_cdc.c) job — untestable on host — but
+ * the resolver half (echo the live bytes) is exercised here. */
+static int test_line_coding(void)
+{
+    printf("test_line_coding\n");
+    /* Default seed → 7 bytes that match g_line_coding verbatim. */
+    usb_ctrl_resp r = resolve(0xA1, 0x21, 0, 0, 7, 1);
+    if (r.kind != USB_CTRL_TX_DATA || r.len != USB_CDC_LINE_CODING_LEN ||
+        r.data != g_line_coding)
+        return fail("GET_LINE_CODING must alias the live buffer");
+
+    /* Simulate a host SET_LINE_CODING to 9600 8N1 (what usb_cdc.c writes from the
+     * OUT stage), then GET must reflect the new bytes — not the 115200 default. */
+    const uint8_t new_lc[USB_CDC_LINE_CODING_LEN] =
+        { 0x80, 0x25, 0x00, 0x00, 0x00, 0x00, 0x08 };   /* 9600, 1 stop, none, 8 */
+    memcpy(g_line_coding, new_lc, sizeof new_lc);
+    r = resolve(0xA1, 0x21, 0, 0, 7, 1);
+    if (r.kind != USB_CTRL_TX_DATA || memcmp(r.data, new_lc, sizeof new_lc) != 0)
+        return fail("GET_LINE_CODING must reflect the updated coding");
+
+    /* A GET with the wrong wLength still STALLs regardless of buffer contents. */
+    r = resolve(0xA1, 0x21, 0, 0, 6, 1);
+    if (r.kind != USB_CTRL_STALL) return fail("GET_LINE_CODING wLength!=7 must STALL");
+
+    memcpy(g_line_coding, (const uint8_t[])USB_CDC_LINE_CODING_DEFAULT,
+           USB_CDC_LINE_CODING_LEN);   /* restore default for any later test */
+    printf("  ok\n");
+    return 0;
+}
+
 /* Malformed SETUP tuples (wrong direction / recipient / wValue / wIndex /
  * wLength) must STALL rather than be silently accepted (USB 2.0 §9.3-9.4). */
 static int test_setup_validation(void)
@@ -230,6 +267,7 @@ int main(void)
     rc |= test_set_configuration();
     rc |= test_status_and_config_query();
     rc |= test_class_requests();
+    rc |= test_line_coding();
     rc |= test_setup_validation();
     printf(rc ? "FAIL\n" : "ALL PASS\n");
     return rc;

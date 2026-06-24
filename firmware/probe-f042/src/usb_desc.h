@@ -27,6 +27,11 @@
 
 #define USB_CDC_CONFIG_TOTAL_LEN 67u    /* must match sizeof(usb_config_desc)   */
 #define USB_CDC_DEVICE_LEN       18u
+#define USB_CDC_LINE_CODING_LEN  7u     /* CDC PSTN §6.3.11 GET/SET_LINE_CODING */
+/* Power-on line coding: dwDTERate=115200 (LE), bCharFormat=0 (1 stop bit),
+ * bParityType=0 (none), bDataBits=8 — CDC PSTN §6.3.11 byte layout. Shared by
+ * the firmware seed/reset and the host tests so they cannot drift. */
+#define USB_CDC_LINE_CODING_DEFAULT { 0x00, 0xC2, 0x01, 0x00, 0x00, 0x00, 0x08 }
 
 /* Standard USB descriptor type codes (USB 2.0 §9.4, Table 9-5). */
 #define USB_DT_DEVICE            0x01u

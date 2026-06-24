@@ -186,6 +186,13 @@ static uint8_t        s_pending_addr;    /* SET_ADDRESS value, applied after sta
 static volatile uint8_t s_configured;
 static uint8_t        s_strbuf[64];      /* scratch for string descriptors */
 static uint8_t        s_setup[8];        /* last SETUP packet */
+/* Active CDC line coding: default 115200 8N1 (dwDTERate=115200, 1 stop, no
+ * parity, 8 data — CDC PSTN §6.3.11). SET_LINE_CODING's OUT payload overwrites
+ * it; GET_LINE_CODING echoes it. Touched only in ISR context (handle_setup /
+ * ep0_handler), like the rest of the EP0 state, so it needs no volatile. The
+ * probe's UART baud is fixed at compile time — this is for CDC spec-correctness
+ * only and does not retune the link. */
+static uint8_t        s_line_coding[USB_CDC_LINE_CODING_LEN] = USB_CDC_LINE_CODING_DEFAULT;
 
 /* Send the next packet of the pending control-IN transfer (s_ep0_in_ptr/rem). */
 static void ep0_in_continue(void)
@@ -266,7 +273,7 @@ static void handle_setup(void)
     s_ep0_out_data = 0;
 
     usb_ctrl_resp r = usb_ctrl_resolve(s_setup, s_configured,
-                                       s_strbuf, sizeof s_strbuf);
+                                       s_strbuf, sizeof s_strbuf, s_line_coding);
     switch (r.kind) {
     case USB_CTRL_TX_DATA:
         ep0_begin_in(r.data, r.len, r.zlp);
@@ -304,8 +311,17 @@ static void ep0_handler(void)
              * blanket re-arm RX afterward (that would defeat an ep0_stall()). */
             handle_setup();
         } else if (s_ep0_out_data) {
-            /* OUT data stage of a control-write (e.g. SET_LINE_CODING) completed:
-             * accept the payload (discarded) and ship the IN status ZLP. */
+            /* OUT data stage of a control-write completed. SET_LINE_CODING is the
+             * only control-write the resolver accepts (USB_CTRL_EXPECT_OUT, with
+             * wLength == USB_CDC_LINE_CODING_LEN). Capture the new coding (echoed
+             * by GET_LINE_CODING) only if the host actually delivered the full 7
+             * bytes — COUNTn_RX (USB_COUNTn_RX bits 9:0, RM0091 Rev 10 p899) is
+             * the received byte count. A short/malformed packet leaves the prior
+             * coding intact rather than echoing stale PMA bytes. Then ship the IN
+             * status ZLP. */
+            uint16_t rxcount = (uint16_t)(*BT_RX_COUNT(EP_CTRL) & 0x3FFu);
+            if (rxcount >= USB_CDC_LINE_CODING_LEN)
+                pma_read(EP0_RX_OFF, s_line_coding, USB_CDC_LINE_CODING_LEN);
             s_ep0_out_data = 0;
             ep0_send_status();
             ep_set_stat_rx(EP_CTRL, STAT_VALID);   /* ready for the next SETUP */
@@ -368,6 +384,11 @@ static void usb_reset(void)
     s_pending_addr = 0;
     s_configured = 0;
     s_tx_busy = 0;
+    /* Restore the power-on line coding so a re-enumeration starts from the
+     * default, not a previous session's SET_LINE_CODING. */
+    const uint8_t lc_default[USB_CDC_LINE_CODING_LEN] = USB_CDC_LINE_CODING_DEFAULT;
+    for (uint32_t i = 0; i < USB_CDC_LINE_CODING_LEN; i++)
+        s_line_coding[i] = lc_default[i];
     /* A bus reset deconfigures the device; queued EP1 TX bytes can no longer be
      * delivered, so drop them (silent loss — see usb_cdc_poll / apply_config). */
     bytefifo_clear(&s_tx);

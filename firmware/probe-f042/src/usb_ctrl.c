@@ -61,14 +61,14 @@ static usb_ctrl_resp tx_data(const uint8_t *data, uint16_t full_len, uint16_t wl
 static usb_ctrl_resp resolve_get_descriptor(const uint8_t setup[8], uint16_t wlen,
                                             uint8_t *scratch, size_t scratch_len)
 {
-    uint8_t type  = setup[3];   /* wValue high = descriptor type  */
-    uint8_t index = setup[2];   /* wValue low  = descriptor index */
+    uint8_t type = setup[3];    /* wValue high = descriptor type  */
     switch (type) {
     case USB_DT_DEVICE:
         return tx_data(usb_device_desc, USB_CDC_DEVICE_LEN, wlen);
     case USB_DT_CONFIG:
         return tx_data(usb_config_desc, USB_CDC_CONFIG_TOTAL_LEN, wlen);
     case USB_DT_STRING: {
+        uint8_t index = setup[2];   /* wValue low = descriptor index */
         size_t n = usb_desc_string(index, scratch, scratch_len);
         return (n == 0) ? stall() : tx_data(scratch, (uint16_t)n, wlen);
     }
@@ -151,7 +151,8 @@ static usb_ctrl_resp resolve_standard(const uint8_t setup[8], uint8_t configured
     }
 }
 
-static usb_ctrl_resp resolve_class(const uint8_t setup[8], uint16_t wlen)
+static usb_ctrl_resp resolve_class(const uint8_t setup[8], uint16_t wlen,
+                                   const uint8_t *line_coding)
 {
     /* All CDC-ACM management requests target the communication interface
      * (CDC PSTN §6.3): reject any other recipient/direction tuple. */
@@ -163,18 +164,18 @@ static usb_ctrl_resp resolve_class(const uint8_t setup[8], uint16_t wlen)
         return stall();
 
     switch (setup[1]) {         /* bRequest */
-    case CDC_GET_LINE_CODING: {
-        /* 115200 8N1 placeholder: dwDTERate=115200, stop=0, parity=0, data=8. */
-        static const uint8_t lc[7] = { 0x00, 0xC2, 0x01, 0x00, 0x00, 0x00, 0x08 };
-        if (dir != RT_DIR_IN || wvalue != 0u || wlen != sizeof lc)
+    case CDC_GET_LINE_CODING:
+        /* Echo the host's last-set line coding (CDC PSTN §6.3.11). The probe's
+         * UART baud is fixed at compile time, so this only keeps the CDC device
+         * spec-correct; the bytes do not retune the link. */
+        if (dir != RT_DIR_IN || wvalue != 0u || wlen != USB_CDC_LINE_CODING_LEN)
             return stall();
-        return tx_data(lc, sizeof lc, wlen);
-    }
+        return tx_data(line_coding, USB_CDC_LINE_CODING_LEN, wlen);
     case CDC_SET_LINE_CODING: {
-        if (dir == RT_DIR_IN || wvalue != 0u || wlen != 7u)
+        if (dir == RT_DIR_IN || wvalue != 0u || wlen != USB_CDC_LINE_CODING_LEN)
             return stall();
         usb_ctrl_resp r = { USB_CTRL_EXPECT_OUT, 0, 0, 0, -1, -1 };
-        return r;               /* 7-byte OUT data stage follows (discarded) */
+        return r;               /* 7-byte OUT stage follows; caller stores it */
     }
     case CDC_SET_CONTROL_LINE_STATE:
         if (dir == RT_DIR_IN || wlen != 0u)
@@ -186,12 +187,13 @@ static usb_ctrl_resp resolve_class(const uint8_t setup[8], uint16_t wlen)
 }
 
 usb_ctrl_resp usb_ctrl_resolve(const uint8_t setup[8], uint8_t configured,
-                               uint8_t *scratch, size_t scratch_len)
+                               uint8_t *scratch, size_t scratch_len,
+                               const uint8_t *line_coding)
 {
     uint16_t wlen = (uint16_t)(setup[6] | ((uint16_t)setup[7] << 8));
     switch (setup[0] & RT_TYPE_MASK) {
     case RT_TYPE_STD:   return resolve_standard(setup, configured, wlen, scratch, scratch_len);
-    case RT_TYPE_CLASS: return resolve_class(setup, wlen);
+    case RT_TYPE_CLASS: return resolve_class(setup, wlen, line_coding);
     default:            return stall();
     }
 }
