@@ -52,6 +52,15 @@ static inline int bytefifo_push_all(bytefifo_t *f, const uint8_t *src, size_t le
     return 1;
 }
 
+/* Discard all queued bytes (drop unsent data). Touches only the read index, so
+ * a single producer's bytefifo_push_all (which advances only head) may run
+ * concurrently — e.g. this can be called from an ISR to flush a FIFO whose
+ * producer is the masked-elsewhere main loop. */
+static inline void bytefifo_clear(bytefifo_t *f)
+{
+    f->tail = f->head;
+}
+
 /* Pop one byte; return 1 and set *out if available, else 0. */
 static inline int bytefifo_pop(bytefifo_t *f, uint8_t *out)
 {

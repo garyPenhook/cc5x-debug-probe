@@ -73,7 +73,7 @@ breakpoints, silicon single-step, or zero overhead (the probe effect is real).
 **Remaining** (→ roadmap phase): single-source `cdl_proto`/codec (P1); compile-and-
 measure gate + symbol-map population (P2); baud-via-MCP wiring (P3); `debug-monitor`
 (P4); STM32 firmware (**P5a + P5b both build clean** — relay+init+native USB-CDC,
-zero warnings; P5a VCP 2336 B flash / 2152 B RAM, P5b USB-CDC 3964 B flash / 2240 B
+zero warnings; P5a VCP 2336 B flash / 2152 B RAM, P5b USB-CDC 4540 B flash / 2240 B
 of 6 KB RAM; all T-001 checks verified, descriptors host-tested, pending bench);
 end-to-end (P6); Tier-B bit-bang, Tier-C pulse-width/-train, target-tick,
 WRITE_MEM+blacklist, bank-crossing read, READ_PGM, compression (P7).
@@ -88,7 +88,7 @@ WRITE_MEM+blacklist, bank-crossing read, READ_PGM, compression (P7).
 | **P3** | Baud via Microchip MCP: codegen computes SPBRG from `fosc`+baud, cites the datasheet URL; `brg` override kept | Unit test pins SPBRG to a known Fosc/baud table row |
 | **P4** | `debug-monitor` PC command (decode + map + commands) | Decodes canned frames + renders named trace in CI |
 | **P5a** | STM32F042K6 firmware bench bring-up (CMake+HAL/LL): target USART1 (PA9/PA10) → TIM2 timestamp → relay to **ST-LINK VCP** (USART2 PA2/PA15). No native-USB wiring needed | Relays + timestamps target frames to a PC terminal over the ST-LINK Virtual COM; LED (PB3) heartbeat |
-| **P5b** | Swap PC transport to **native USB-CDC** on PA11/PA12; wire USB breakout to CN3-D10/D2. **Built:** bare-metal F042 USB FS device + CDC-ACM driver (`usb_cdc.c`/`usb_desc.c`), RM0091-cited, descriptor-unit-tested, compile-time `PROBE_PC_TRANSPORT` switch; cross-builds clean (3964 B flash / 2240 B of 6 KB SRAM). **Pending:** bench enumeration. | Enumerates as CDC; forwards + timestamps frames; buffers fit 6 KB SRAM |
+| **P5b** | Swap PC transport to **native USB-CDC** on PA11/PA12; wire USB breakout to CN3-D10/D2. **Built:** bare-metal F042 USB FS device + CDC-ACM driver (`usb_cdc.c`/`usb_desc.c`), RM0091-cited, descriptor-unit-tested, compile-time `PROBE_PC_TRANSPORT` switch; cross-builds clean (4540 B flash / 2240 B of 6 KB SRAM). **Pending:** bench enumeration. | Enumerates as CDC; forwards + timestamps frames; buffers fit 6 KB SRAM |
 | **P6** | End-to-end slice on PIC16F15244: trace → READ_MEM → breakpoints | Live timestamped trace; mem peek; bp stop/continue |
 | **P7** | Deferred: Tier-B bit-bang, Tier-C pulse-width/-train + STM32 input-capture, target-tick, WRITE_MEM+blacklist, bank-crossing read, READ_PGM, compression | Each its own gate |
 
@@ -135,6 +135,6 @@ comment + the `cdl_map`. **The formula/value always comes from the MCP, never me
   (not CubeMX/HAL). Relay core + RM0091-verified peripheral init + bare-metal USB FS
   CDC-ACM driver (`usb_cdc.c`/`usb_desc.c`) **cross-build clean** (arm-none-eabi-gcc,
   zero warnings) for both PC-link transports via the `PROBE_PC_TRANSPORT` switch
-  (P5a VCP 2336 B flash / 2152 B RAM; P5b USB-CDC 3964 B flash / 2240 B of 6 KB RAM),
+  (P5a VCP 2336 B flash / 2152 B RAM; P5b USB-CDC 4540 B flash / 2240 B of 6 KB RAM),
   host-tested (relay + USB descriptors), all T-001 checks verified — pending hardware
   bench. USART DMA stays deferred — see [04 §"Firmware framework"](04-software-stack.md).

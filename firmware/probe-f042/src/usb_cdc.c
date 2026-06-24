@@ -17,6 +17,7 @@
  */
 #include "usb_cdc.h"
 #include "usb_desc.h"
+#include "usb_ctrl.h"
 #include "bytefifo.h"
 
 #if defined(__has_include)
@@ -77,20 +78,9 @@
 #define CRS_CR_CEN_BIT          (1u << 5)    /* RM0091 p143 */
 #define CRS_CR_AUTOTRIMEN_BIT   (1u << 6)
 
-/* ---- USB standard / CDC request constants (USB 2.0 §9.4; CDC PSTN §6.3) ----- */
-#define REQ_GET_STATUS         0x00u
-#define REQ_CLEAR_FEATURE      0x01u
-#define REQ_SET_FEATURE        0x03u
-#define REQ_SET_ADDRESS        0x05u
-#define REQ_GET_DESCRIPTOR     0x06u
-#define REQ_GET_CONFIGURATION  0x08u
-#define REQ_SET_CONFIGURATION  0x09u
-#define CDC_SET_LINE_CODING        0x20u
-#define CDC_GET_LINE_CODING        0x21u
-#define CDC_SET_CONTROL_LINE_STATE 0x22u
-#define RT_TYPE_MASK   0x60u            /* bmRequestType type field */
-#define RT_TYPE_STD    0x00u
-#define RT_TYPE_CLASS  0x20u
+/* USB standard / CDC request decoding lives in the pure resolver (usb_ctrl.c),
+ * which is host-unit-tested; this file only executes the resolved actions on the
+ * USB registers. */
 
 /* ---- Endpoint numbers & PMA layout (PMA-local byte offsets) ---------------- */
 #define EP_CTRL   0u
@@ -209,20 +199,13 @@ static void ep0_in_continue(void)
     ep_set_stat_tx(EP_CTRL, STAT_VALID);
 }
 
-/* Queue an IN data response, capped to the host's wLength (USB 2.0 §9.3.5), and
- * arm RX for the OUT status stage that ends this control-read. A terminating
- * ZLP is required ONLY when we return fewer bytes than the host asked for AND
- * that count is an exact multiple of the max packet size (otherwise the final
- * short/full packet already ends the data stage — a ZLP when len==wLength would
- * be a spurious extra IN packet the host is not reading). */
-static void ep0_reply(const uint8_t *data, uint16_t len)
+/* Begin a control-IN data transfer (length/ZLP already decided by the resolver),
+ * and arm RX for the OUT status stage that ends this control-read. */
+static void ep0_begin_in(const uint8_t *data, uint16_t len, uint8_t zlp)
 {
-    uint16_t wlen = (uint16_t)(s_setup[6] | ((uint16_t)s_setup[7] << 8));
-    if (len > wlen)
-        len = wlen;
     s_ep0_in_ptr = data;
     s_ep0_in_rem = len;
-    s_ep0_in_zlp = (len < wlen && (len % USB_CDC_EP0_MAXPACKET) == 0u) ? 1u : 0u;
+    s_ep0_in_zlp = zlp;
     ep0_in_continue();
     ep_set_stat_rx(EP_CTRL, STAT_VALID);
 }
@@ -242,45 +225,12 @@ static void ep0_stall(void)
     ep_set_stat_rx(EP_CTRL, STAT_STALL);
 }
 
-static void handle_get_descriptor(void)
+/* Execute a resolved SET_CONFIGURATION: enable (cfg=1) or disable (cfg=0) the
+ * CDC data endpoints. EP1 bulk: RX VALID (ready for host OUT), TX NAK (nothing
+ * yet). EP2 notify: TX NAK (present but unused). */
+static void apply_config(uint8_t cfg)
 {
-    uint8_t  type  = s_setup[3];        /* wValue high = descriptor type */
-    uint8_t  index = s_setup[2];        /* wValue low  = descriptor index */
-    switch (type) {
-    case USB_DT_DEVICE:
-        ep0_reply(usb_device_desc, USB_CDC_DEVICE_LEN);
-        break;
-    case USB_DT_CONFIG:
-        ep0_reply(usb_config_desc, USB_CDC_CONFIG_TOTAL_LEN);
-        break;
-    case USB_DT_STRING: {
-        size_t n = usb_desc_string(index, s_strbuf, sizeof s_strbuf);
-        if (n == 0)
-            ep0_stall();
-        else
-            ep0_reply(s_strbuf, (uint16_t)n);
-        break;
-    }
-    default:
-        ep0_stall();                    /* e.g. DEVICE_QUALIFIER: FS-only → STALL */
-        break;
-    }
-}
-
-static void handle_standard(void)
-{
-    switch (s_setup[1]) {               /* bRequest */
-    case REQ_GET_DESCRIPTOR:
-        handle_get_descriptor();
-        break;
-    case REQ_SET_ADDRESS:
-        s_pending_addr = (uint8_t)(s_setup[2] & 0x7Fu);
-        s_addr_pending = 1u;            /* one-shot: applied after status ships */
-        ep0_send_status();              /* address applied after status (RM §30.5.2) */
-        break;
-    case REQ_SET_CONFIGURATION:
-        /* Activate the CDC data endpoints. EP1 bulk: RX VALID (ready to receive
-         * host OUT), TX NAK (nothing to send yet). EP2 notify: TX NAK. */
+    if (cfg == 1u) {
         ep_config(EP_DATA, EP_TYPE_BULK, EP_DATA);
         *BT_TX_ADDR(EP_DATA)  = EP1_TX_OFF;
         *BT_TX_COUNT(EP_DATA) = 0;
@@ -293,69 +243,51 @@ static void handle_standard(void)
         *BT_TX_ADDR(EP_NOTIF)  = EP2_TX_OFF;
         *BT_TX_COUNT(EP_NOTIF) = 0;
         ep_set_stat_tx(EP_NOTIF, STAT_NAK);
-
-        s_tx_busy = 0;
-        s_configured = (s_setup[2] != 0u);
-        ep0_send_status();
-        break;
-    case REQ_GET_CONFIGURATION: {
-        uint8_t cfg = s_configured ? 1u : 0u;
-        ep0_reply(&cfg, 1u);
-        break;
+    } else {
+        /* Return to the Address state: disable the data endpoints. The host has
+         * torn down the pipe, so any bytes still queued for EP1 are unsendable —
+         * drop them rather than leak a stale prefix into a later session. */
+        ep_set_stat_rx(EP_DATA, STAT_DISABLED);
+        ep_set_stat_tx(EP_DATA, STAT_DISABLED);
+        ep_set_stat_tx(EP_NOTIF, STAT_DISABLED);
+        bytefifo_clear(&s_tx);
     }
-    case REQ_GET_STATUS: {
-        static const uint8_t st[2] = { 0u, 0u };  /* not self-powered/ remote-wake here */
-        ep0_reply(st, 2u);
-        break;
-    }
-    case REQ_CLEAR_FEATURE:
-    case REQ_SET_FEATURE:
-        ep0_send_status();
-        break;
-    default:
-        ep0_stall();
-        break;
-    }
-}
-
-static void handle_class(void)
-{
-    switch (s_setup[1]) {               /* bRequest */
-    case CDC_GET_LINE_CODING: {
-        /* 115200 8N1 placeholder: dwDTERate=115200, bCharFormat=0, bParity=0,
-         * bDataBits=8 (CDC PSTN §6.3.11). The probe does not gate on it. */
-        static const uint8_t lc[7] = { 0x00, 0xC2, 0x01, 0x00, 0x00, 0x00, 0x08 };
-        ep0_reply(lc, 7u);
-        break;
-    }
-    case CDC_SET_LINE_CODING:
-        /* 7-byte OUT data stage follows; accept and discard it. Mark that an OUT
-         * data stage is expected, then arm RX; the IN status ZLP is sent when
-         * that OUT completes (ep0_handler), not now. */
-        s_ep0_out_data = 1u;
-        ep_set_stat_rx(EP_CTRL, STAT_VALID);
-        break;
-    case CDC_SET_CONTROL_LINE_STATE:
-        ep0_send_status();              /* DTR/RTS — no data stage */
-        break;
-    default:
-        ep0_stall();
-        break;
-    }
+    s_tx_busy = 0;
+    s_configured = cfg;
 }
 
 static void handle_setup(void)
 {
     pma_read(EP0_RX_OFF, s_setup, 8u);
-    /* Reset per-transfer state; each handler arms its own STAT_RX/STAT_TX. */
-    s_ep0_in_ptr  = 0;
-    s_ep0_in_rem  = 0;
-    s_ep0_in_zlp  = 0;
+    /* Reset per-transfer state; the actions below arm STAT_RX/STAT_TX. */
+    s_ep0_in_ptr   = 0;
+    s_ep0_in_rem   = 0;
+    s_ep0_in_zlp   = 0;
     s_ep0_out_data = 0;
-    switch (s_setup[0] & RT_TYPE_MASK) {
-    case RT_TYPE_STD:   handle_standard(); break;
-    case RT_TYPE_CLASS: handle_class();    break;
-    default:            ep0_stall();       break;
+
+    usb_ctrl_resp r = usb_ctrl_resolve(s_setup, s_configured,
+                                       s_strbuf, sizeof s_strbuf);
+    switch (r.kind) {
+    case USB_CTRL_TX_DATA:
+        ep0_begin_in(r.data, r.len, r.zlp);
+        break;
+    case USB_CTRL_EXPECT_OUT:
+        s_ep0_out_data = 1u;                /* OUT data stage follows (discarded) */
+        ep_set_stat_rx(EP_CTRL, STAT_VALID);
+        break;
+    case USB_CTRL_STATUS:
+        if (r.set_address >= 0) {           /* applied after the status ships */
+            s_pending_addr = (uint8_t)r.set_address;
+            s_addr_pending = 1u;
+        }
+        if (r.set_config >= 0)
+            apply_config((uint8_t)r.set_config);
+        ep0_send_status();
+        break;
+    case USB_CTRL_STALL:
+    default:
+        ep0_stall();
+        break;
     }
 }
 
@@ -436,6 +368,9 @@ static void usb_reset(void)
     s_pending_addr = 0;
     s_configured = 0;
     s_tx_busy = 0;
+    /* A bus reset deconfigures the device; queued EP1 TX bytes can no longer be
+     * delivered, so drop them (silent loss — see usb_cdc_poll / apply_config). */
+    bytefifo_clear(&s_tx);
 
     /* Address 0, function enabled (RM0091 §30.5.2). */
     USB->DADDR = DADDR_EF;
@@ -510,16 +445,15 @@ size_t usb_cdc_write(const uint8_t *buf, size_t len)
 
 void usb_cdc_poll(void)
 {
-    if (!s_configured)
-        return;
-
-    /* EP1's EPnR and s_tx_busy are also written by the USB ISR (ep1_handler,
-     * SET_CONFIGURATION). Mask just the USB interrupt around the busy-check +
-     * arm so the read-modify-write on the endpoint register can't be torn, and
-     * so a re-configuration can't reset EP1 mid-arm. USART1 (target timestamp)
-     * stays unmasked. */
+    /* s_configured, EP1's EPnR, and s_tx_busy are all written by the USB ISR
+     * (ep1_handler, SET_CONFIGURATION, USB reset). Mask the USB interrupt around
+     * the WHOLE configured-check + busy-check + arm: checking s_configured before
+     * masking would race a reset / SET_CONFIGURATION(0) landing between the check
+     * and the arm, which would touch EP1 while the device is deconfigured. The
+     * read-modify-write on the endpoint register likewise can't be torn here.
+     * USART1 (target timestamp) stays unmasked. */
     NVIC_DisableIRQ(USB_IRQn);
-    if (!s_tx_busy && bytefifo_count(&s_tx) > 0u) {
+    if (s_configured && !s_tx_busy && bytefifo_count(&s_tx) > 0u) {
         /* Pack up to one bulk max-packet (64 B) from the FIFO into the IN buffer. */
         uint8_t pkt[USB_CDC_BULK_MAXPACKET];
         uint32_t n = 0;

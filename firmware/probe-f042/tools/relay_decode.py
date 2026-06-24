@@ -44,7 +44,9 @@ class Deframer:
         for b in chunk:
             if b == FLAG:
                 if self._in and self._buf:
-                    if self._bad:
+                    # A FLAG arriving mid-escape (ESC then FLAG) is a dangling
+                    # escape — the frame is truncated, not a valid body.
+                    if self._bad or self._esc:
                         yield {"error": "escape", "raw": bytes(self._buf).hex()}
                     else:
                         frame = self._decode(bytes(self._buf))
@@ -129,6 +131,10 @@ def selftest() -> int:
     bad = bytearray(_encode(9, 5, b"\xde\xad")); bad[-2] ^= 0xFF
     out = list(d.feed(bytes(bad) + _encode(10, 6, b"\xbe\xef")))
     _check(any("error" in f for f in out) and any(f.get("seq") == 10 for f in out), str(out))
+    # dangling escape (body then ESC then FLAG) -> escape error, resyncs cleanly
+    out = list(d.feed(b"\x7e\xaa\xbb\x7d\x7e" + _encode(11, 7, b"\x01")))
+    _check(any(f.get("error") == "escape" for f in out), f"dangling escape: {out}")
+    _check(any(f.get("seq") == 11 for f in out), f"resync after dangling escape: {out}")
     print("relay_decode selftest: ALL PASS")
     return 0
 
@@ -136,7 +142,9 @@ def selftest() -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Decode the P5a probe VCP relay stream.")
     ap.add_argument("port", nargs="?", help="serial port, e.g. /dev/ttyACM0")
-    ap.add_argument("--baud", type=int, default=115200)
+    # Matches PROBE_VCP_BAUD in src/probe_pins.h (P5a ST-LINK VCP). For the P5b
+    # native USB-CDC link the host ignores the baud, so any value works there.
+    ap.add_argument("--baud", type=int, default=460800)
     ap.add_argument("--file", help="decode a captured binary file instead of a port")
     ap.add_argument("--selftest", action="store_true", help="run offline self-test")
     args = ap.parse_args()

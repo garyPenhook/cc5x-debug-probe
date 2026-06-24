@@ -1,6 +1,5 @@
-# Build outputs
-/build/
-/build-tests/
+# Build outputs (build-vcp/, build-usb-cdc/, build-tests/, plus any legacy build/)
+/build*/
 *.elf
 *.bin
 *.map

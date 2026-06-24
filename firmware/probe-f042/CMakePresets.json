@@ -3,12 +3,23 @@
   "cmakeMinimumRequired": { "major": 3, "minor": 20, "patch": 0 },
   "configurePresets": [
     {
-      "name": "firmware",
-      "displayName": "F042 firmware (cross build)",
-      "description": "Cross build. Links probe_f042.elf when vendor/ is present (see vendor/README.md); init is RM0091-verified but not yet hardware-validated.",
-      "binaryDir": "${sourceDir}/build",
+      "name": "firmware-vcp",
+      "displayName": "F042 firmware — ST-LINK VCP relay (default)",
+      "description": "Cross build, PC link over the ST-LINK VCP (P5a). Links probe_f042.elf when vendor/ is present (see vendor/README.md); init is RM0091-verified but not yet hardware-validated.",
+      "binaryDir": "${sourceDir}/build-vcp",
       "toolchainFile": "${sourceDir}/cmake/arm-none-eabi-gcc.cmake",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "MinSizeRel" }
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "MinSizeRel",
+        "PROBE_PC_TRANSPORT": "VCP"
+      }
+    },
+    {
+      "name": "firmware-usb-cdc",
+      "inherits": "firmware-vcp",
+      "displayName": "F042 firmware — native USB-CDC link",
+      "description": "Cross build, PC link over the native USB-CDC device (P5b, PA11/PA12). Separate binary dir from firmware-vcp so the cached PROBE_PC_TRANSPORT cannot leak between transports.",
+      "binaryDir": "${sourceDir}/build-usb-cdc",
+      "cacheVariables": { "PROBE_PC_TRANSPORT": "USB_CDC" }
     },
     {
       "name": "tests",
@@ -18,7 +29,8 @@
     }
   ],
   "buildPresets": [
-    { "name": "firmware", "configurePreset": "firmware" },
+    { "name": "firmware-vcp", "configurePreset": "firmware-vcp" },
+    { "name": "firmware-usb-cdc", "configurePreset": "firmware-usb-cdc" },
     { "name": "tests", "configurePreset": "tests" }
   ],
   "testPresets": [
