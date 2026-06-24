@@ -168,6 +168,20 @@ static void ep_config(uint8_t n, uint32_t type, uint8_t addr)
     EPR(n) = (uint16_t)(type | addr);
 }
 
+/* Force DTOG_RX/DTOG_TX to DATA0. The toggle bits change only on write-1 and are
+ * unchanged on write-0 (RM0091 Rev 10 p893-894), so writing back the *currently
+ * set* DTOG bits flips exactly those to 0 while clear ones stay 0. Initializing
+ * the data toggle is mandatory when (re)enabling a non-control endpoint (RM0091
+ * p894) so the first packet after SET_CONFIGURATION uses DATA0 — otherwise a
+ * reconfigure without a bus reset (SET_CONFIGURATION 0→1) leaves a stale toggle
+ * and the host drops the first EP1 IN/OUT on a PID mismatch (USB 2.0 §9.4.5). */
+static void ep_reset_dtog(uint8_t n)
+{
+    uint16_t r = EPR(n);
+    uint16_t dtog = (uint16_t)(r & (EP_DTOG_RX | EP_DTOG_TX));
+    EPR(n) = (uint16_t)((r & EPREG_MASK) | EP_CTR_RX | EP_CTR_TX | dtog);
+}
+
 /* ---- TX path (bulk IN, EP1) ----------------------------------------------- */
 static uint8_t    s_tx_storage[256];
 static bytefifo_t s_tx;
@@ -239,6 +253,7 @@ static void apply_config(uint8_t cfg)
 {
     if (cfg == 1u) {
         ep_config(EP_DATA, EP_TYPE_BULK, EP_DATA);
+        ep_reset_dtog(EP_DATA);             /* DATA0 for the first packet (RM0091 p894) */
         *BT_TX_ADDR(EP_DATA)  = EP1_TX_OFF;
         *BT_TX_COUNT(EP_DATA) = 0;
         *BT_RX_ADDR(EP_DATA)  = EP1_RX_OFF;
@@ -247,6 +262,7 @@ static void apply_config(uint8_t cfg)
         ep_set_stat_tx(EP_DATA, STAT_NAK);
 
         ep_config(EP_NOTIF, EP_TYPE_INTERRUPT, EP_NOTIF);
+        ep_reset_dtog(EP_NOTIF);            /* DATA0 for the first packet (RM0091 p894) */
         *BT_TX_ADDR(EP_NOTIF)  = EP2_TX_OFF;
         *BT_TX_COUNT(EP_NOTIF) = 0;
         ep_set_stat_tx(EP_NOTIF, STAT_NAK);

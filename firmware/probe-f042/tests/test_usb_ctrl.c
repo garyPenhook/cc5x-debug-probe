@@ -254,6 +254,28 @@ static int test_setup_validation(void)
     /* SET_LINE_CODING with wrong wLength → STALL. */
     r = resolve(0x21, 0x20, 0, 0, 6, 1);
     if (r.kind != USB_CTRL_STALL) return fail("SET_LINE_CODING wLength!=7 must STALL");
+
+    /* CDC requests must target the comm interface (0); the data interface (1) or
+     * any other wIndex must STALL, not be silently accepted. */
+    r = resolve(0xA1, 0x21, 0, 1, 7, 1);     /* GET_LINE_CODING to interface 1 */
+    if (r.kind != USB_CTRL_STALL) return fail("CDC GET_LINE_CODING to iface 1 must STALL");
+    r = resolve(0x21, 0x22, 0x03, 1, 0, 1);  /* SET_CONTROL_LINE_STATE to interface 1 */
+    if (r.kind != USB_CTRL_STALL) return fail("CDC SET_CONTROL_LINE_STATE to iface 1 must STALL");
+    r = resolve(0x21, 0x20, 0, 5, 7, 1);     /* SET_LINE_CODING to a nonexistent iface */
+    if (r.kind != USB_CTRL_STALL) return fail("CDC SET_LINE_CODING to iface 5 must STALL");
+
+    /* GET_STATUS / feature requests must name a real interface or endpoint. */
+    r = resolve(0x81, 0x00, 0, 5, 2, 1);     /* GET_STATUS interface 5 (only 0,1 exist) */
+    if (r.kind != USB_CTRL_STALL) return fail("GET_STATUS bad interface must STALL");
+    r = resolve(0x82, 0x00, 0, 0x05, 2, 1);  /* GET_STATUS endpoint 0x05 (not present) */
+    if (r.kind != USB_CTRL_STALL) return fail("GET_STATUS bad endpoint must STALL");
+    r = resolve(0x82, 0x00, 0, 0x81, 2, 1);  /* GET_STATUS endpoint 0x81 (EP1 IN, valid) */
+    if (r.kind != USB_CTRL_TX_DATA || r.len != 2 || r.data[0] != 0 || r.data[1] != 0)
+        return fail("GET_STATUS valid endpoint 0x81 must report 0x0000");
+    r = resolve(0x02, 0x01, FEAT_ENDPOINT_HALT_VAL, 0x05, 0, 1); /* CLEAR halt, bad ep */
+    if (r.kind != USB_CTRL_STALL) return fail("CLEAR_FEATURE halt on bad endpoint must STALL");
+    r = resolve(0x02, 0x01, FEAT_ENDPOINT_HALT_VAL, 0x81, 0, 1); /* CLEAR halt, valid ep */
+    if (r.kind != USB_CTRL_STATUS) return fail("CLEAR_FEATURE halt on EP1 IN → STATUS");
     printf("  ok\n");
     return 0;
 }

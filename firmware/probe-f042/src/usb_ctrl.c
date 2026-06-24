@@ -28,6 +28,29 @@
 /* Standard feature selectors (USB 2.0 §9.4.1, Table 9-6). */
 #define FEAT_ENDPOINT_HALT 0x00u
 
+/* Interfaces/endpoints this device exposes (must match usb_desc.c's config
+ * descriptor). A GET_STATUS / CLEAR|SET_FEATURE / class request aimed at an
+ * interface or endpoint the device does not implement must STALL, not be
+ * silently accepted (USB 2.0 §9.4). Comm interface 0 owns all CDC management
+ * requests (CDC PSTN §6.3). */
+#define USB_CDC_COMM_INTERFACE  0u
+#define USB_CDC_NUM_INTERFACES  2u      /* comm (0) + data (1) */
+
+/* Endpoint addresses (dir bit7 | number): EP0 control, EP1 IN/OUT bulk, EP2 IN
+ * notify. wIndex of an endpoint-directed request carries one of these. */
+static uint8_t valid_endpoint(uint16_t windex)
+{
+    switch (windex) {
+    case 0x00u:  /* EP0 control */
+    case 0x01u:  /* EP1 OUT (bulk) */
+    case 0x81u:  /* EP1 IN  (bulk) */
+    case 0x82u:  /* EP2 IN  (notification) */
+        return 1u;
+    default:
+        return 0u;
+    }
+}
+
 uint8_t usb_ctrl_zlp_needed(uint16_t sent, uint16_t wlength, uint16_t maxpacket)
 {
     /* A short or zero-length final packet already ends the data stage. A ZLP is
@@ -123,9 +146,20 @@ static usb_ctrl_resp resolve_standard(const uint8_t setup[8], uint8_t configured
     case REQ_GET_STATUS:
         if (dir != RT_DIR_IN || wvalue != 0u || wlen != 2u)
             return stall();
-        if (recip != RT_RECIP_DEVICE && recip != RT_RECIP_INTERFACE &&
-            recip != RT_RECIP_ENDPOINT)
+        /* wIndex must name a recipient the device actually has (USB 2.0 §9.4.5):
+         * device → 0, interface → a real interface, endpoint → a real endpoint. */
+        if (recip == RT_RECIP_DEVICE) {
+            if (windex != 0u)
+                return stall();
+        } else if (recip == RT_RECIP_INTERFACE) {
+            if (windex >= USB_CDC_NUM_INTERFACES)
+                return stall();
+        } else if (recip == RT_RECIP_ENDPOINT) {
+            if (!valid_endpoint(windex))
+                return stall();
+        } else {
             return stall();
+        }
         if (scratch_len < 2u)
             return stall();
         /* Device: self-powered (bit0), no remote wakeup — must match the config
@@ -143,7 +177,8 @@ static usb_ctrl_resp resolve_standard(const uint8_t setup[8], uint8_t configured
          * rather than being blindly ACKed (USB 2.0 §9.4.1, §9.4.9). */
         if (dir == RT_DIR_IN || wlen != 0u)
             return stall();
-        if (recip == RT_RECIP_ENDPOINT && wvalue == FEAT_ENDPOINT_HALT)
+        if (recip == RT_RECIP_ENDPOINT && wvalue == FEAT_ENDPOINT_HALT &&
+            valid_endpoint(windex))
             return status();
         return stall();
     default:
@@ -155,12 +190,14 @@ static usb_ctrl_resp resolve_class(const uint8_t setup[8], uint16_t wlen,
                                    const uint8_t *line_coding)
 {
     /* All CDC-ACM management requests target the communication interface
-     * (CDC PSTN §6.3): reject any other recipient/direction tuple. */
+     * (CDC PSTN §6.3): reject any other recipient, and any wIndex other than the
+     * comm interface (e.g. a request aimed at the data interface 1 must STALL). */
     uint8_t  dir    = setup[0] & RT_DIR_IN;
     uint8_t  recip  = setup[0] & RT_RECIP_MASK;
     uint16_t wvalue = (uint16_t)(setup[2] | ((uint16_t)setup[3] << 8));
+    uint16_t windex = (uint16_t)(setup[4] | ((uint16_t)setup[5] << 8));
 
-    if (recip != RT_RECIP_INTERFACE)
+    if (recip != RT_RECIP_INTERFACE || windex != USB_CDC_COMM_INTERFACE)
         return stall();
 
     switch (setup[1]) {         /* bRequest */

@@ -208,7 +208,10 @@ void board_led(int on)
 /* Target-USART RX ISR: clear error flags, stamp arrival time, hand the byte to
  * the relay. On the F0 USART, ORE/FE/NE/PE are cleared by writing USART_ICR (NOT
  * by reading RDR) — an uncleared ORE would otherwise stall RX (RM0091 §27.8.8/9).
- * Reading RDR clears RXNE. */
+ * Reading RDR clears RXNE.
+ * Prototype declared here (not a shared header): the only other reference is the
+ * vector table in startup_stm32f042x6.s. Satisfies -Wmissing-prototypes. */
+void USART1_IRQHandler(void);
 void USART1_IRQHandler(void)
 {
     uint32_t isr = TARGET_USART->ISR;
@@ -226,7 +229,9 @@ void USART1_IRQHandler(void)
 
 #if PC_OVER_USB
 /* USB global interrupt (NVIC vector 31, CMSIS USB_IRQn). Overrides the weak
- * USB_IRQHandler in startup_stm32f042x6.s. */
+ * USB_IRQHandler in startup_stm32f042x6.s (the only other reference, so the
+ * prototype lives here — satisfies -Wmissing-prototypes). */
+void USB_IRQHandler(void);
 void USB_IRQHandler(void)
 {
     usb_cdc_irq();
