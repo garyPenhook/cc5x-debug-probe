@@ -1,0 +1,12 @@
+# Build outputs
+/build/
+/build-tests/
+*.elf
+*.bin
+*.map
+*.o
+*.a
+
+# Vendored CMSIS/startup/linker (license — fetch per vendor/README.md, do not commit)
+/vendor/*
+!/vendor/README.md

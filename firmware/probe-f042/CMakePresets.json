@@ -1,0 +1,27 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 20, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "firmware",
+      "displayName": "F042 firmware (cross build)",
+      "description": "Cross build. Links probe_f042.elf when vendor/ is present (see vendor/README.md); init is RM0091-verified but not yet hardware-validated.",
+      "binaryDir": "${sourceDir}/build",
+      "toolchainFile": "${sourceDir}/cmake/arm-none-eabi-gcc.cmake",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "MinSizeRel" }
+    },
+    {
+      "name": "tests",
+      "displayName": "Host unit tests (portable relay core)",
+      "description": "Native host build (no ARM toolchain) — builds + runs the relay unit tests.",
+      "binaryDir": "${sourceDir}/build-tests"
+    }
+  ],
+  "buildPresets": [
+    { "name": "firmware", "configurePreset": "firmware" },
+    { "name": "tests", "configurePreset": "tests" }
+  ],
+  "testPresets": [
+    { "name": "tests", "configurePreset": "tests", "output": { "outputOnFailure": true } }
+  ]
+}

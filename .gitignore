@@ -5,14 +5,16 @@
 *.o
 *.ko
 *.obj
-*.elf
 
-# Linker output
-*.ilk
+# Firmware/linker outputs
+*.elf
+*.hex
+*.bin
 *.map
+*.ilk
 *.exp
 
-# Precompiled Headers
+# Precompiled headers
 *.gch
 *.pch
 
@@ -22,7 +24,7 @@
 *.la
 *.lo
 
-# Shared objects (inc. Windows DLLs)
+# Shared objects
 *.dll
 *.so
 *.so.*
@@ -34,15 +36,19 @@
 *.app
 *.i*86
 *.x86_64
-*.hex
 
 # Debug files
 *.dSYM/
 *.su
 *.idb
 *.pdb
+*.dwo
 
-# Kernel Module Compile Results
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Kernel module compile results
 *.mod*
 *.cmd
 .tmp_versions/
@@ -51,5 +57,8 @@ Module.symvers
 Mkfile.old
 dkms.conf
 
-# debug information files
-*.dwo
+# Large vendored STM32Cube SDK download - the few files actually needed are
+# copied into firmware/probe-f042/vendor/ (itself git-ignored). Safe to delete
+# these once vendor/ is populated.
+/STM32CubeF0-master/
+/STM32CubeF0-master.zip
