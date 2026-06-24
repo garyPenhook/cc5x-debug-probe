@@ -53,9 +53,12 @@ static inline int bytefifo_push_all(bytefifo_t *f, const uint8_t *src, size_t le
 }
 
 /* Discard all queued bytes (drop unsent data). Touches only the read index, so
- * a single producer's bytefifo_push_all (which advances only head) may run
- * concurrently — e.g. this can be called from an ISR to flush a FIFO whose
- * producer is the masked-elsewhere main loop. */
+ * it cannot corrupt a concurrent producer's indices — but it is NOT a clean
+ * drop if a bytefifo_push_all is in progress: tail=head would discard only the
+ * bytes pushed so far and leave the producer to append the rest. A caller that
+ * flushes from another context (e.g. an ISR) MUST therefore serialize against
+ * the producer — usb_cdc.c masks the USB IRQ around usb_cdc_write so this flush
+ * sees a whole frame or none of it. */
 static inline void bytefifo_clear(bytefifo_t *f)
 {
     f->tail = f->head;

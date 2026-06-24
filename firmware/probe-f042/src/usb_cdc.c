@@ -440,7 +440,17 @@ void usb_cdc_init(void)
 
 size_t usb_cdc_write(const uint8_t *buf, size_t len)
 {
-    return bytefifo_push_all(&s_tx, buf, len) ? len : 0u;
+    /* Mask the USB ISR around the push so a reset / SET_CONFIGURATION(0) flush
+     * (bytefifo_clear in usb_reset / apply_config) cannot interleave mid-frame.
+     * Without this, the flush could drop only the bytes pushed so far while the
+     * producer appends the rest, leaving a headerless partial-frame suffix that
+     * usb_cdc_poll would transmit after reconfigure — corrupting the relay
+     * stream instead of dropping the queued TX whole. Masked, the flush sees
+     * either the entire frame or none of it. USART1 stays unmasked. */
+    NVIC_DisableIRQ(USB_IRQn);
+    size_t r = bytefifo_push_all(&s_tx, buf, len) ? len : 0u;
+    NVIC_EnableIRQ(USB_IRQn);
+    return r;
 }
 
 void usb_cdc_poll(void)

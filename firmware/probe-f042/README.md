@@ -80,7 +80,7 @@ switching transports never reuses a stale cached value. `PROBE_PC_TRANSPORT`
 | Transport | flash (text) | RAM (data+bss) |
 |---|---|---|
 | VCP (P5a) | 2336 B (7% of 32 KB) | 2152 B (35% of 6 KB) |
-| USB-CDC (P5b) | 4540 B (14%) | 2240 B (36%) |
+| USB-CDC (P5b) | 4572 B (14%) | 2240 B (36%) |
 
 ## Flash / run
 Flash `probe_f042.bin` via the on-board ST-LINK (st-flash / STM32CubeProgrammer).
