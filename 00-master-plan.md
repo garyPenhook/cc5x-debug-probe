@@ -70,8 +70,8 @@ breakpoints, silicon single-step, or zero overhead (the probe effect is real).
 - Measured budget, PIC16F15244 Tier-A-full: **60 B RAM / 465 code words (11%)**.
 - 283 tests pass; flake8 clean; code-reviewed (5 real bugs fixed).
 
-**Remaining** (→ roadmap phase): single-source `cdl_proto`/codec (P1); compile-and-
-measure gate + symbol-map population (P2); baud-via-MCP wiring (P3); `debug-monitor`
+**Remaining** (→ roadmap phase): ~~single-source `cdl_proto`/codec (P1)~~ **done**;
+compile-and-measure gate + symbol-map population (P2); baud-via-MCP wiring (P3); `debug-monitor`
 (P4); STM32 firmware (**P5a + P5b both build clean** — relay+init+native USB-CDC,
 zero warnings; P5a VCP 2336 B flash / 2152 B RAM, P5b USB-CDC 4792 B flash / 2248 B
 of 6 KB RAM; all T-001 checks verified, descriptors host-tested, pending bench);
@@ -83,7 +83,7 @@ WRITE_MEM+blacklist, bank-crossing read, READ_PGM, compression (P7).
 | Phase | Deliverable | Acceptance gate |
 |---|---|---|
 | **P0** | Master doc + reconcile 01–04 (this) | Docs internally consistent |
-| **P1** | `cdl_proto.py` spec + `cdl_codec.py` (Python) + tests; debuggen imports the spec | Codec round-trips every message; matches stub's emitted C on golden vectors |
+| **P1 ✅** | **Done** ([design](05-cdl-proto-codec.md)): `cdl_proto.py` single-source spec + `cdl_codec.py` codec + `cdl_protogen.py` shared `cdl_proto.h` emitter; `debuggen` imports the spec (generated stub/map byte-identical). Lives in `cc5x-helper` (branch `p1-cdl-proto-codec`). Follow-on: stub `#include`s the generated `cdl_proto.h`. | ✅ Codec round-trips every message + recovery; golden `0xF0` frame byte-matches the probe firmware; shared `#define` block proven non-drifting; 305 tests, flake8 clean |
 | **P2** | Compile-and-measure gate (CC5X only): build stubs for roomy/512 B/256 B parts, parse `.occ/.var/.asm/.fcs`, populate `cdl_map.symbols`, confirm/demote tier | CI green via CrossOver runner; map symbols filled; [02 §6](02-target-footprint.md) closed |
 | **P3** | Baud via Microchip MCP: codegen computes SPBRG from `fosc`+baud, cites the datasheet URL; `brg` override kept | Unit test pins SPBRG to a known Fosc/baud table row |
 | **P4** | `debug-monitor` PC command (decode + map + commands) | Decodes canned frames + renders named trace in CI |
