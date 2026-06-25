@@ -1,6 +1,8 @@
 # P1 — Single-Source CDL Protocol Codec (Design)
 
-Status: design / ready to implement. Master-plan phase **P1** (`00-master-plan.md` §5).
+Status: **implemented** in `cc5x-helper@aee89a8` (`cdl_proto.py`, `cdl_codec.py`,
+`cdl_protogen.py`, `debuggen.py` refactored to import the spec; P1 test suites
+green). Master-plan phase **P1** (`00-master-plan.md` §5).
 This doc is grounded in the real code as it stands on 2026-06-24:
 
 - **Wire spec:** `01-debug-link-protocol.md` (frame format, message types, CRC).
