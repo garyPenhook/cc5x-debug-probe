@@ -1,0 +1,71 @@
+# Pre-commit hooks for the debug-probe repo.
+#   pip install pre-commit && pre-commit install        # one-time
+#   pre-commit run --all-files                          # check everything
+#
+# Vendored/binary trees (STM32CubeF0, datasheets, build output) are excluded
+# globally below — they are not ours to lint or reformat.
+exclude: |
+  (?x)^(
+    STM32CubeF0-master/.*|
+    .*/vendor/.*|
+    .*/build.*/.*|
+    .*\.(pdf|zip|bin|elf|map|o|a)$
+  )$
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.18
+    hooks:
+      - id: ruff            # lint (auto-fix what it safely can)
+        args: [--fix]
+      # Formatting is opt-in (matches the C side): the tool's comments are
+      # hand-aligned, so reflow only when you mean to:
+      #   pre-commit run ruff-format --hook-stage manual
+      - id: ruff-format
+        stages: [manual]
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.2
+    hooks:
+      - id: codespell
+        additional_dependencies: [tomli]   # read [tool.codespell] from pyproject
+
+  # C static analysis — cppcheck on our firmware sources. Fast, no reformatting.
+  - repo: local
+    hooks:
+      - id: cppcheck
+        name: cppcheck (firmware src)
+        language: system
+        entry: cppcheck
+        args:
+          - --enable=warning,style,performance,portability
+          - --inline-suppr
+          - --error-exitcode=1
+          - --quiet
+          - --suppress=unusedFunction
+          - --suppress=missingIncludeSystem
+          - --suppress=missingInclude
+          - --std=c11
+          - -Ifirmware/probe-f042/src
+        files: ^firmware/probe-f042/src/.*\.(c|h)$
+
+      # clang-format only the lines you changed (preserves the hand-aligned
+      # register/descriptor tables). Run manually, it is not wired to auto-fire:
+      #   pre-commit run clang-format-diff --hook-stage manual
+      - id: clang-format-diff
+        name: clang-format (changed C lines)
+        language: system
+        entry: git-clang-format
+        args: [--force]
+        pass_filenames: false
+        types_or: [c, c++]
+        stages: [manual]

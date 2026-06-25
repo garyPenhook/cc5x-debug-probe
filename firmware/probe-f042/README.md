@@ -31,9 +31,11 @@ decodes either (`/dev/ttyACM*` — for USB-CDC the baud is ignored by the host).
 | `src/main.c` | App: relay → VCP TX FIFO drain, LED heartbeat | ✅ done |
 | `src/board_f042.c` | F042 register layer (clock/GPIO/TIM2/USART) + transport dispatch | ✅ builds clean, RM0091-cited |
 | `src/usb_desc.[ch]` | USB-CDC (ACM) descriptor set — pure data | ✅ done, host-tested |
-| `src/usb_cdc.[ch]` | Bare-metal F042 USB FS device CDC driver (P5b) | ✅ builds clean, RM0091-cited; pending bench |
+| `src/usb_ctrl.[ch]` | Pure EP0 control-request resolver (no hardware) | ✅ done, host-tested |
+| `src/usb_cdc.[ch]` | Bare-metal F042 USB FS device CDC driver (P5b) — executes resolver actions on the USB registers | ✅ builds clean, RM0091-cited; pending bench |
 | `tests/test_relay.c` | Host unit tests (framing, escaping, all-or-nothing) | ✅ passing |
 | `tests/test_usb_desc.c` | Host unit tests (descriptor self-consistency) | ✅ passing |
+| `tests/test_usb_ctrl.c` | Host unit tests (EP0 decisions: descriptor/ZLP/SET_*/STALL) | ✅ passing |
 
 `board_f042.c` is fully implemented: the data-path wiring (RX ISR, timestamp,
 LED, all-or-nothing VCP TX) **and** the peripheral init (SYSCLK=HSI48 48 MHz,
@@ -53,17 +55,48 @@ From the **STM32Cube_FW_F0** package, copy into `vendor/`:
 ```
 cmake --preset tests && cmake --build --preset tests && ctest --preset tests
 ```
-Builds and runs `tests/test_relay.c` against the portable relay core — verifies
-SLIP framing/escaping, multi-frame chunking, all-or-nothing TX retry, and the
-FIFO. This is what catches framing regressions.
+Builds and runs three host suites: `test_relay` (SLIP framing/escaping, multi-frame
+chunking, all-or-nothing TX retry, FIFO — catches framing regressions),
+`test_usb_desc` (CDC descriptor self-consistency), and `test_usb_ctrl` (the EP0
+control-request resolver: descriptor selection + wLength cap + ZLP rule,
+SET_ADDRESS, SET_CONFIGURATION 0/1/invalid, GET_STATUS, class requests). The
+register-level USB sequencing in `usb_cdc.c` stays bench-gated.
+
+## Linting & static analysis
+All tools are free/open-source; CI (`.github/workflows/ci.yml`) runs them on
+every push/PR, and `.pre-commit-config.yaml` runs the fast ones locally
+(`pip install pre-commit && pre-commit install`).
+
+| Tool | Scope | How to run |
+|---|---|---|
+| compiler warnings | `src/` (host + cross) | built in — `PROBE_WARNINGS` in `CMakeLists.txt` |
+| **cppcheck** | `src/` C | `cmake --build build-tests --target cppcheck` |
+| **clang-tidy** | portable C (`relay`/`usb_desc`/`usb_ctrl`) | `clang-tidy -p build-tests src/relay.c …` (config: `.clang-tidy`) |
+| **ruff** | `tools/` Python (lint) | `ruff check .` (config: `pyproject.toml`) |
+| **mypy** | `tools/` Python (types) | `mypy tools` |
+| **codespell** | code + docs | `codespell` |
+
+### Formatting (opt-in)
+Formatting is **not** a CI gate — the register/descriptor tables and the Python
+tool's comments are hand-aligned on purpose. The configs exist
+(`.clang-format`, `[tool.ruff]`) so you can format **changed lines** on demand:
+
+```
+git clang-format                                   # C: only your staged diff
+pre-commit run ruff-format --hook-stage manual     # Python: ruff/Black style
+```
 
 ## Build (firmware)
 ```
-cmake --preset firmware                            # VCP (P5a, default)
-cmake --preset firmware -DPROBE_PC_TRANSPORT=USB_CDC   # native USB-CDC (P5b)
-cmake --build --preset firmware
+cmake --preset firmware-vcp        # VCP (P5a, default)  -> build-vcp/
+cmake --build --preset firmware-vcp
+
+cmake --preset firmware-usb-cdc    # native USB-CDC (P5b) -> build-usb-cdc/
+cmake --build --preset firmware-usb-cdc
 ```
-`PROBE_PC_TRANSPORT` (`VCP` | `USB_CDC`) selects the PC link; it maps to the
+The two presets pin `PROBE_PC_TRANSPORT` and use separate binary directories, so
+switching transports never reuses a stale cached value. `PROBE_PC_TRANSPORT`
+(`VCP` | `USB_CDC`) selects the PC link; it maps to the
 `PROBE_PC_TRANSPORT_*` enum in `probe_pins.h`. With `vendor/` present this links
 `probe_f042.elf`/`.bin` and prints a size report.
 **Current builds (arm-none-eabi-gcc 16.1.0, MinSizeRel), zero warnings:**
@@ -71,7 +104,7 @@ cmake --build --preset firmware
 | Transport | flash (text) | RAM (data+bss) |
 |---|---|---|
 | VCP (P5a) | 2336 B (7% of 32 KB) | 2152 B (35% of 6 KB) |
-| USB-CDC (P5b) | 3964 B (12%) | 2240 B (36%) |
+| USB-CDC (P5b) | 4792 B (15%) | 2248 B (37%) |
 
 ## Flash / run
 Flash `probe_f042.bin` via the on-board ST-LINK (st-flash / STM32CubeProgrammer).
@@ -79,10 +112,11 @@ The LED (PB3) blinks ~2 Hz as a heartbeat. Once a CC5X target is wired to PA10
 (RX), decode the timestamped frames off the VCP with the bench helper:
 
 ```
-tools/relay_decode.py /dev/ttyACM0        # live (needs pyserial)
+tools/relay_decode.py /dev/ttyACM0        # live; default --baud 460800 = PROBE_VCP_BAUD
 tools/relay_decode.py --file capture.bin  # offline
 tools/relay_decode.py --selftest          # no hardware/deps
 ```
+(For the P5b USB-CDC link the host ignores the baud, so `/dev/ttyACM*` works as-is.)
 
 `relay_decode.py` is an independent reimplementation of the wire format; a
 C-encode → Python-decode cross-check confirms `relay.c` and the decoder agree

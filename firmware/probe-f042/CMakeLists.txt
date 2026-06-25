@@ -8,6 +8,15 @@ project(probe_f042 C ASM)
 
 set(CMAKE_C_STANDARD 11)
 
+# Emit compile_commands.json for clang-tidy / IDEs (see .clang-tidy).
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Warning set shared by every target we own (vendor/ sources are excluded).
+# Not -Werror: warnings guide, they don't gate the build. CI runs the static
+# analyzers (cppcheck/clang-tidy) for the harder gate.
+set(PROBE_WARNINGS -Wall -Wextra -Wshadow -Wundef -Wpointer-arith
+    -Wcast-align -Wstrict-prototypes -Wmissing-prototypes -Wdouble-promotion)
+
 # ---------------------------------------------------------------------------
 # Host build (no ARM toolchain) -> portable unit tests only.
 # ---------------------------------------------------------------------------
@@ -15,14 +24,38 @@ if(NOT CMAKE_CROSSCOMPILING)
     enable_testing()
     add_executable(test_relay tests/test_relay.c src/relay.c)
     target_include_directories(test_relay PRIVATE src)
-    target_compile_options(test_relay PRIVATE -Wall -Wextra)
+    target_compile_options(test_relay PRIVATE ${PROBE_WARNINGS})
     add_test(NAME relay COMMAND test_relay)
 
     # USB-CDC descriptors are pure data (no CMSIS) -> host-testable like relay.
     add_executable(test_usb_desc tests/test_usb_desc.c src/usb_desc.c)
     target_include_directories(test_usb_desc PRIVATE src)
-    target_compile_options(test_usb_desc PRIVATE -Wall -Wextra)
+    target_compile_options(test_usb_desc PRIVATE ${PROBE_WARNINGS})
     add_test(NAME usb_desc COMMAND test_usb_desc)
+
+    # USB control-request resolver is pure logic (no CMSIS) -> host-testable.
+    add_executable(test_usb_ctrl tests/test_usb_ctrl.c src/usb_ctrl.c src/usb_desc.c)
+    target_include_directories(test_usb_ctrl PRIVATE src)
+    target_compile_options(test_usb_ctrl PRIVATE ${PROBE_WARNINGS})
+    add_test(NAME usb_ctrl COMMAND test_usb_ctrl)
+
+    # Static analysis target: `cmake --build build-tests --target cppcheck`.
+    # Analyses our src/ only. Mirrors the CI suppressions: unusedFunction fires
+    # on the cross-TU firmware API, missingInclude on CMSIS we don't ship here.
+    find_program(CPPCHECK_EXE NAMES cppcheck)
+    if(CPPCHECK_EXE)
+        add_custom_target(cppcheck
+            COMMAND ${CPPCHECK_EXE}
+                --enable=warning,style,performance,portability
+                --inline-suppr --error-exitcode=1 --quiet
+                --suppress=unusedFunction --suppress=missingIncludeSystem
+                --suppress=missingInclude
+                --std=c11 -I ${CMAKE_SOURCE_DIR}/src
+                ${CMAKE_SOURCE_DIR}/src
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            COMMENT "Running cppcheck on src/"
+            VERBATIM)
+    endif()
     return()
 endif()
 
@@ -36,13 +69,19 @@ set(LINKER_SCRIPT ${VENDOR_DIR}/STM32F042K6Tx_FLASH.ld)
 set(STARTUP_SRC   ${VENDOR_DIR}/startup_stm32f042x6.s)
 set(SYSTEM_SRC    ${VENDOR_DIR}/system_stm32f0xx.c)
 
-set(APP_SRCS src/main.c src/relay.c src/board_f042.c src/usb_cdc.c src/usb_desc.c)
+set(APP_SRCS src/main.c src/relay.c src/board_f042.c
+             src/usb_cdc.c src/usb_desc.c src/usb_ctrl.c)
 
 # PC-link transport: VCP (P5a, ST-LINK Virtual COM over USART2, default) or
 # USB_CDC (P5b, native USB on PA11/PA12). Maps to the PROBE_PC_TRANSPORT_* enum
 # in probe_pins.h.
 set(PROBE_PC_TRANSPORT "VCP" CACHE STRING "PC-link transport: VCP or USB_CDC")
 set_property(CACHE PROBE_PC_TRANSPORT PROPERTY STRINGS VCP USB_CDC)
+# STRINGS is only an editor hint — enforce the value so a typo can't fall through
+# to PROBE_PC_TRANSPORT_<typo> (which the preprocessor would treat as 0 = VCP).
+if(NOT PROBE_PC_TRANSPORT STREQUAL "VCP" AND NOT PROBE_PC_TRANSPORT STREQUAL "USB_CDC")
+    message(FATAL_ERROR "PROBE_PC_TRANSPORT must be VCP or USB_CDC (got '${PROBE_PC_TRANSPORT}')")
+endif()
 
 if(EXISTS ${STARTUP_SRC} AND EXISTS ${LINKER_SCRIPT})
     add_executable(probe_f042.elf ${APP_SRCS} ${STARTUP_SRC} ${SYSTEM_SRC})
@@ -50,6 +89,7 @@ if(EXISTS ${STARTUP_SRC} AND EXISTS ${LINKER_SCRIPT})
         src
         ${VENDOR_DIR}/CMSIS/Device/ST/STM32F0xx/Include
         ${VENDOR_DIR}/CMSIS/Include)
+    target_compile_options(probe_f042.elf PRIVATE ${PROBE_WARNINGS})
     target_compile_definitions(probe_f042.elf PRIVATE STM32F042x6
         PROBE_PC_TRANSPORT=PROBE_PC_TRANSPORT_${PROBE_PC_TRANSPORT})
     target_link_options(probe_f042.elf PRIVATE -T${LINKER_SCRIPT} -Wl,-Map=probe_f042.map)
@@ -60,8 +100,11 @@ if(EXISTS ${STARTUP_SRC} AND EXISTS ${LINKER_SCRIPT})
     # compile-smoked against a mock CMSIS, but NOT yet hardware-validated.
     # Review ES0243 errata and bench-test before relying on the image.
 else()
-    message(WARNING
-        "Vendor files missing in ${VENDOR_DIR}/ — see vendor/README.md. "
-        "Nothing to build for the cross target; use the 'tests' preset for the "
-        "host-testable relay core.")
+    # Fatal, not a warning: a "successful" configure with no firmware target would
+    # let CI/automation report green without ever building the image. The host-only
+    # path is the separate 'tests' preset (which returns above, never reaching here).
+    message(FATAL_ERROR
+        "Vendor files missing in ${VENDOR_DIR}/ (need ${STARTUP_SRC} and "
+        "${LINKER_SCRIPT}) — see vendor/README.md. The cross target cannot be "
+        "built. For the host-testable relay core use: cmake --preset tests.")
 endif()

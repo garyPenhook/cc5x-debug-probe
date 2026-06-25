@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  firmware:
+    name: C build + analysis
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: firmware/probe-f042
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential cppcheck clang-tidy
+
+      - name: Configure + build host tests
+        run: |
+          cmake --preset tests
+          cmake --build --preset tests
+
+      - name: Run unit tests
+        run: ctest --preset tests
+
+      - name: cppcheck
+        run: cmake --build build-tests --target cppcheck
+
+      # clang-tidy on the portable sources (the cross-only sources need CMSIS,
+      # which is vendored and not available in CI).
+      - name: clang-tidy
+        run: |
+          clang-tidy -p build-tests --warnings-as-errors='*' \
+            src/relay.c src/usb_desc.c src/usb_ctrl.c
+
+  python:
+    name: Python lint + types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install ruff mypy
+      - name: ruff lint
+        run: ruff check .
+      - name: mypy
+        run: mypy firmware/probe-f042/tools
+
+  spelling:
+    name: Spelling
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install "codespell[toml]"
+      - run: codespell
+
+# NOTE: code *formatting* (clang-format for C, `ruff format` for Python) is
+# intentionally NOT a CI gate. The firmware hand-aligns register/descriptor
+# tables and the Python tool aligns its comments; a blanket reflow would be
+# noise. Formatters are configured (.clang-format, [tool.ruff]) and available
+# locally — see firmware/probe-f042/README.md "Formatting" — applied to changed
+# lines on demand, not enforced repo-wide.

@@ -51,8 +51,9 @@ ST-LINK only (DB) → native USB (P5b) needs a breakout wired to CN3-D10/D2+GND.
 
 Status: **cross-build green** (arm-none-eabi-gcc 16.1.0, zero warnings); CMSIS
 confirms the RM0091 clock values (SW=0x3/SWS=0xC); `USART1_IRQHandler` links as
-the concrete vector. Footprint: ~2 KB flash (6%), 4424 B RAM (72% of 6 KB).
-**Not yet hardware-validated** — flash and bench-test next.
+the concrete vector. Footprint (VCP/P5a): ~2.3 KB flash (7%), 2152 B RAM (35% of
+6 KB); see the per-transport SRAM budget below. **Not yet hardware-validated** —
+flash and bench-test next.
 
 ## Errata pass — ES0243 Rev 4 (silicon rev A, the only revision)
 Reviewed against the P5a init. **No code change required for P5a:**
@@ -97,9 +98,15 @@ Class: USB 2.0 FS **CDC-ACM** (Virtual COM Port), VID/PID **0x0483/0x5740** (ST'
 standard VCP pair → inbox host drivers). Descriptors in `usb_desc.c`,
 host-unit-tested (`tests/test_usb_desc.c`).
 
-**Not yet hardware-validated.** Highest-risk untested assumptions to confirm on
-the bench first: (1) PMA packed "2×16" addressing, (2) HSI48+CRS lock without a
-crystal, (3) EP0 enumeration / control-transfer state machine.
+The EP0 control-request *decision* logic (descriptor selection, wLength cap, ZLP
+rule, SET_ADDRESS/SET_CONFIGURATION/GET_STATUS, class requests) is factored into a
+pure resolver (`usb_ctrl.c`) and **host-unit-tested** (`tests/test_usb_ctrl.c`);
+`usb_cdc.c` only executes the resolved actions on the registers.
+
+**Not yet hardware-validated.** Highest-risk assumptions left to confirm on the
+bench: (1) PMA packed "2×16" addressing, (2) HSI48+CRS lock without a crystal,
+(3) the register-level EP0 sequencing (EPnR toggle/rc_w0 writes, data toggle)
+that unit tests can't exercise.
 
 ## SRAM budget (6 KB)
 - VCP (P5a): relay ring (`s_data[512]` + 32-entry mark ring) + 256 B VCP FIFO ≈

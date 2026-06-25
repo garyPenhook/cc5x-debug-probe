@@ -100,6 +100,31 @@ static int test_framing_escapes(void)
     return 0;
 }
 
+/* Cross-implementation anchor: the exact bytes relay.c must put on the wire for
+ * one known frame (seq=0, ts=256, data={0x7E,0x7D,0x42} — chosen to exercise
+ * SLIP stuffing of both FLAG and ESC). Derived by hand from the frame layout in
+ * 01-debug-link-protocol.md §3, NOT from relay.c. The identical vector is
+ * asserted by tools/relay_decode.py's selftest, so the C encoder and the Python
+ * decoder cannot silently drift apart. If you change the wire format, update
+ * BOTH and the spec. */
+static int test_golden_vector(void)
+{
+    printf("test_golden_vector\n");
+    static const uint8_t golden[] = {
+        0x7E, 0xF0, 0x00, 0x07, 0x00, 0x01, 0x00, 0x00,
+        0x7D, 0x5E, 0x7D, 0x5D, 0x42, 0xE2, 0x7E,
+    };
+    g_out_len = 0; g_reject_n = 0;
+    relay_init(sink);
+    uint8_t in[] = { 0x7E, 0x7D, 0x42 };
+    for (size_t k = 0; k < sizeof in; k++) relay_target_rx(in[k], 256);  /* one burst */
+    while (relay_poll()) {}
+    if (g_out_len != sizeof golden || memcmp(g_out, golden, sizeof golden))
+        return fail("encoded bytes differ from the spec golden vector");
+    printf("  ok (%zu bytes match spec)\n", g_out_len);
+    return 0;
+}
+
 static int test_bursts(void)
 {
     printf("test_bursts\n");
@@ -174,6 +199,7 @@ int main(void)
 {
     int rc = 0;
     rc |= test_framing_escapes();
+    rc |= test_golden_vector();
     rc |= test_bursts();
     rc |= test_all_or_nothing_retry();
     rc |= test_drops();

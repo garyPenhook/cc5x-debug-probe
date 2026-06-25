@@ -44,7 +44,9 @@ class Deframer:
         for b in chunk:
             if b == FLAG:
                 if self._in and self._buf:
-                    if self._bad:
+                    # A FLAG arriving mid-escape (ESC then FLAG) is a dangling
+                    # escape — the frame is truncated, not a valid body.
+                    if self._bad or self._esc:
                         yield {"error": "escape", "raw": bytes(self._buf).hex()}
                     else:
                         frame = self._decode(bytes(self._buf))
@@ -112,8 +114,26 @@ def _check(cond: bool, msg: str):
         raise AssertionError(msg)
 
 
+# Cross-implementation anchor: the exact wire bytes for one known frame (seq=0,
+# ts=256, data={0x7E,0x7D,0x42}, chosen to stuff both FLAG and ESC), derived by
+# hand from 01-debug-link-protocol.md §3. The firmware asserts the identical
+# vector in tests/test_relay.c (test_golden_vector), so the C encoder and this
+# Python decoder cannot silently drift. Change the wire format → update BOTH.
+GOLDEN_FRAME = bytes((
+    0x7E, 0xF0, 0x00, 0x07, 0x00, 0x01, 0x00, 0x00,
+    0x7D, 0x5E, 0x7D, 0x5D, 0x42, 0xE2, 0x7E,
+))
+
+
 def selftest() -> int:
     d = Deframer()
+    # Golden vector: the reference encoder reproduces the spec bytes, and the
+    # deframer decodes them back to the known fields.
+    _check(_encode(0, 256, b"\x7e\x7d\x42") == GOLDEN_FRAME,
+           "reference encoder disagrees with the spec golden vector")
+    gf = list(Deframer().feed(GOLDEN_FRAME))
+    _check(len(gf) == 1 and gf[0].get("seq") == 0 and gf[0].get("ts_us") == 256 and
+           gf[0].get("data") == b"\x7e\x7d\x42", f"golden decode: {gf}")
     payloads = [b"\x01\x7e\x7d\xaa", b"", bytes(range(10))]
     stream = b"".join(_encode(i, 1000 + i, p) for i, p in enumerate(payloads))
     # split stream across chunk boundaries to exercise the state machine
@@ -121,14 +141,19 @@ def selftest() -> int:
     for i in range(0, len(stream), 3):
         got.extend(d.feed(stream[i:i + 3]))
     _check(len(got) == len(payloads), f"frame count {len(got)} != {len(payloads)}")
-    for i, (f, p) in enumerate(zip(got, payloads)):
+    for i, (f, p) in enumerate(zip(got, payloads, strict=True)):
         _check("error" not in f, f"frame {i}: {f}")
         _check(f["seq"] == i and f["ts_us"] == 1000 + i and f["data"] == p,
                f"frame {i} mismatch: {f}")
     # corrupted CRC -> reported as error, doesn't desync the next frame
-    bad = bytearray(_encode(9, 5, b"\xde\xad")); bad[-2] ^= 0xFF
+    bad = bytearray(_encode(9, 5, b"\xde\xad"))
+    bad[-2] ^= 0xFF
     out = list(d.feed(bytes(bad) + _encode(10, 6, b"\xbe\xef")))
     _check(any("error" in f for f in out) and any(f.get("seq") == 10 for f in out), str(out))
+    # dangling escape (body then ESC then FLAG) -> escape error, resyncs cleanly
+    out = list(d.feed(b"\x7e\xaa\xbb\x7d\x7e" + _encode(11, 7, b"\x01")))
+    _check(any(f.get("error") == "escape" for f in out), f"dangling escape: {out}")
+    _check(any(f.get("seq") == 11 for f in out), f"resync after dangling escape: {out}")
     print("relay_decode selftest: ALL PASS")
     return 0
 
@@ -136,7 +161,9 @@ def selftest() -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Decode the P5a probe VCP relay stream.")
     ap.add_argument("port", nargs="?", help="serial port, e.g. /dev/ttyACM0")
-    ap.add_argument("--baud", type=int, default=115200)
+    # Matches PROBE_VCP_BAUD in src/probe_pins.h (P5a ST-LINK VCP). For the P5b
+    # native USB-CDC link the host ignores the baud, so any value works there.
+    ap.add_argument("--baud", type=int, default=460800)
     ap.add_argument("--file", help="decode a captured binary file instead of a port")
     ap.add_argument("--selftest", action="store_true", help="run offline self-test")
     args = ap.parse_args()

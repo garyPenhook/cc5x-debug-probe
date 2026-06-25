@@ -154,8 +154,8 @@ size_t relay_poll(void)
     /* 1) Surface drops before data, so a capture is never silently lossy. */
     uint32_t dropped = s_dropped;
     if (dropped != s_reported) {
-        uint8_t arg[4] = { (uint8_t)dropped, (uint8_t)(dropped >> 8),
-                           (uint8_t)(dropped >> 16), (uint8_t)(dropped >> 24) };
+        const uint8_t arg[4] = { (uint8_t)dropped, (uint8_t)(dropped >> 8),
+                                 (uint8_t)(dropped >> 16), (uint8_t)(dropped >> 24) };
         if (emit(RELAY_STATUS_TYPE, arg, 4) == 0)
             return 0;                         /* sink full; retry next poll */
         s_reported = dropped;

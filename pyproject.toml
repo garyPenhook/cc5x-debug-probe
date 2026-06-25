@@ -1,0 +1,40 @@
+# Python tooling config for the repo's helper scripts (firmware/.../tools/).
+# Ruff handles both linting (replaces flake8 + isort + pyupgrade + more) and
+# formatting (Black-compatible). mypy is optional static typing.
+#
+#   ruff check .          # lint
+#   ruff format .         # auto-format
+#   ruff format --check . # CI gate (no writes)
+#   mypy firmware/probe-f042/tools
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+# Third-party / vendored trees are not ours to lint.
+extend-exclude = ["STM32CubeF0-master", "firmware/probe-f042/vendor", "**/build*", "**/__pycache__"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "UP",       # pyupgrade
+    "B",        # flake8-bugbear
+    "C4",       # flake8-comprehensions
+    "SIM",      # flake8-simplify
+    "RUF",      # ruff-specific
+]
+
+[tool.codespell]
+# Skip binaries, vendored trees, datasheets, and build output.
+skip = "*.pdf,*.zip,*.map,*.bin,*.elf,*.o,*.a,.git,STM32CubeF0-master,**/vendor,**/build*,**/__pycache__"
+# STM32 register/bit mnemonics that look like typos: HSI (osc), UE/TE (USART
+# enable bits), ORE (overrun flag); plus "statics" (a real word).
+ignore-words-list = "hsi,ue,te,ore,statics"
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+warn_redundant_casts = true
+ignore_missing_imports = true   # pyserial is an optional runtime dep
+exclude = ["STM32CubeF0-master", "firmware/probe-f042/vendor"]
