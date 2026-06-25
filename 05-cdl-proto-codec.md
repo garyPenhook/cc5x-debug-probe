@@ -1,6 +1,8 @@
 # P1 — Single-Source CDL Protocol Codec (Design)
 
-Status: design / ready to implement. Master-plan phase **P1** (`00-master-plan.md` §5).
+Status: **implemented** in `cc5x-helper@aee89a8` (`cdl_proto.py`, `cdl_codec.py`,
+`cdl_protogen.py`, `debuggen.py` refactored to import the spec; P1 test suites
+green). Master-plan phase **P1** (`00-master-plan.md` §5).
 This doc is grounded in the real code as it stands on 2026-06-24:
 
 - **Wire spec:** `01-debug-link-protocol.md` (frame format, message types, CRC).
@@ -29,14 +31,19 @@ This doc is grounded in the real code as it stands on 2026-06-24:
    spec, used by the PC tool (P4 `debug-monitor`) and as the protocol's reference
    implementation.
 3. `cdl_proto.h` — a C header (constants + optional pack/unpack helpers) emitted
-   from the spec, shared by the CC5X **target stub** and the STM32 **probe
-   firmware**.
+   from the spec for the CC5X **target stub**. The STM32 **probe firmware** does
+   **not** consume it in v0.1: under the recommended flow (C) (§6) `relay.c` stays
+   hand-written and is pinned to the same constants by the `0xF0` golden vector,
+   so no generated file enters the firmware build. Vendoring the header into the
+   probe (flow A) is a documented future option, not a P1 deliverable.
 4. `debuggen.py` refactored to **import the spec** instead of defining
    `:41–105` inline, so the emitted target header is unchanged but no longer a
    second source.
-5. Tests: codec round-trip, byte-exact golden vectors (including the existing
-   probe `0xF0` frame and the doc 01 §10 worked example), and a generated-header
-   golden-file check on the `test_golden.py` pattern.
+5. Tests: codec round-trip, byte-exact golden vectors (the existing probe `0xF0`
+   frame, plus full frames *computed* by the codec for each `01` §4 message —
+   **not** transcribed from `01` §10, whose frames carry a literal `CRC`
+   placeholder and "SEQ/stuffing simplified for readability"), and a
+   generated-header golden-file check on the `test_golden.py` pattern.
 
 **P1 does NOT cover** (tracked elsewhere, do not pull in):
 
@@ -143,20 +150,26 @@ wire*.
 
 ### 4.1 `cdl_codec.py` (Python)
 
-Pure functions, no I/O (P4 owns serial):
+No I/O (P4 owns serial). `encode` is a pure function; **decoding is stateful** —
+a serial/CDC read can split a frame, or even a single escape pair, across two
+chunks, so the deframer must keep `_buf/_in/_esc/_bad` between calls. Mirror
+`relay_decode.py`'s existing object instead of a stateless function:
 
 ```python
-def encode(msg_name: str, seq: int, **fields) -> bytes      # → full stuffed frame incl. FLAGs
-def feed(chunk: bytes) -> Iterator[Frame]                   # SLIP deframer, resync-on-FLAG
+def encode(msg_name: str, seq: int, **fields) -> bytes      # pure → full stuffed frame incl. FLAGs
+
+class Deframer:                                             # SLIP deframer, resync-on-FLAG
+    def feed(self, chunk: bytes) -> Iterator[Frame]: ...    # carries _buf/_in/_esc/_bad across calls
 # Frame: {name, type, seq, **decoded_fields} | {error, raw}
 ```
 
-`feed` must reproduce `relay_decode.py`'s `Deframer` behaviour exactly: CRC/len
-errors and dangling escapes are yielded as `{"error": ...}` and do not desync the
-next frame (`relay_decode.py:43–87`, already tested). P1 can lift that state
-machine wholesale — it is the proven reference.
+`Deframer.feed` must reproduce `relay_decode.py`'s `Deframer` behaviour exactly:
+CRC/len errors and dangling escapes are yielded as `{"error": ...}` and do not
+desync the next frame (`relay_decode.py:43–87`, already tested). P1 can lift that
+state machine wholesale — it is the proven reference, and it is a class precisely
+because the partial-frame state must survive across reads.
 
-### 4.2 `cdl_proto.h` (C, shared by stub + probe)
+### 4.2 `cdl_proto.h` (C, target stub; probe pinned by golden vector)
 
 Must reproduce the bytes `debuggen.py:_render_header` (`:619–637`) emits today, so
 the target stub is unchanged:
@@ -233,11 +246,20 @@ cross-compile. Revisit (A) if the probe grows more message types. Either way, th
 Mirror `tests/test_debuggen.py` / `tests/test_golden.py` (synthetic fixtures, no
 packs, no hardware):
 
-1. **Round-trip:** for every message in the catalogue, `feed(encode(...))`
-   returns the original fields; assert exact byte length and stuffing.
+1. **Round-trip:** for every message in the catalogue,
+   `Deframer().feed(encode(...))` returns the original fields; assert exact byte
+   length and stuffing. Include a split-read case (feed the frame in two chunks,
+   the split landing mid-escape) to prove the deframer state survives across
+   calls.
 2. **Golden vectors (byte-exact):**
-   - the doc 01 §10 worked example frames (HELLO/TRACE/SET_BP/ACK/BP_HIT/
-     READ_MEM/MEM_DATA/CONTINUE) as decode fixtures;
+   - one *computed* full frame per `01` §4 message (HELLO/TRACE/SET_BP/ACK/
+     BP_HIT/READ_MEM/MEM_DATA/CONTINUE): build the bytes with the codec's own
+     CRC + stuffing, freeze them as the fixture, and assert `Deframer().feed`
+     decodes back to the declared fields. **Do not transcribe `01` §10** — it
+     shows `CRC` as a placeholder and states "SEQ/stuffing simplified for
+     readability", so its bytes are illustrative, not wire-exact. Cross-check the
+     decoded *fields* against §10's annotations (e.g. ACK `ref-seq 0`,
+     `READ_MEM addr 0x0020 len 4`) to keep the spec and codec honest;
    - the `0xF0 RELAY` frame `7E F0 00 07 00 01 00 00 7D 5E 7D 5D 42 E2 7E`
      (seq 0, ts 256, data `7E 7D 42`) — identical to the constant in this repo's
      `tests/test_relay.c` and `tools/relay_decode.py`.
@@ -257,7 +279,7 @@ packs, no hardware):
 | Step | Deliverable | Size |
 |---|---|---|
 | 1 | `cdl_proto.py` — constants + `Msg`/`Field` catalogue (incl. PROBE group) | S (~150 LOC) |
-| 2 | `cdl_codec.py` — encode + `feed` deframer (port from `relay_decode.py`) | M (~250 LOC) |
+| 2 | `cdl_codec.py` — `encode` + stateful `Deframer` (port from `relay_decode.py`) | M (~250 LOC) |
 | 3 | `cdl_codec` tests — round-trip + golden vectors (§7.1–7.3) | M (~250 LOC) |
 | 4 | `cdl_proto.h` emitter + golden file (§4.2, §7.5) | S (~120 LOC) |
 | 5 | Refactor `debuggen.py` to import the spec; prove zero golden diff (§5) | S (~80 LOC churn) |

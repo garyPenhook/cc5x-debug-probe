@@ -58,9 +58,10 @@ class Deframer:
                 self._bad = False
             elif not self._in:
                 continue
-            elif b == ESC:
-                self._esc = True
             elif self._esc:
+                # A pending escape consumes THIS byte even if it is itself ESC:
+                # checking `b == ESC` first would let `ESC ESC` re-arm the escape and
+                # silently accept malformed wire (ESC ESC ESC_FLAG -> a bare FLAG).
                 if b == ESC_FLAG:
                     self._buf.append(FLAG)
                 elif b == ESC_ESC:
@@ -68,6 +69,8 @@ class Deframer:
                 else:
                     self._bad = True            # malformed escape -> drop frame
                 self._esc = False
+            elif b == ESC:
+                self._esc = True
             else:
                 self._buf.append(b)
 
@@ -154,6 +157,13 @@ def selftest() -> int:
     out = list(d.feed(b"\x7e\xaa\xbb\x7d\x7e" + _encode(11, 7, b"\x01")))
     _check(any(f.get("error") == "escape" for f in out), f"dangling escape: {out}")
     _check(any(f.get("seq") == 11 for f in out), f"resync after dangling escape: {out}")
+    # malformed double-escape must be rejected, not normalized into a valid frame:
+    # a stray ESC before a valid ESC ESC_FLAG pair must NOT re-arm into a bare FLAG.
+    good = _encode(12, 7, b"\x7e")                       # data 0x7e -> stuffed 7d 5e
+    i = good.index(ESC)                                  # first ESC in the frame body
+    tampered = good[:i] + bytes([ESC]) + good[i:]
+    out = list(Deframer().feed(tampered))
+    _check([f.get("error") for f in out] == ["escape"], f"double-escape not rejected: {out}")
     print("relay_decode selftest: ALL PASS")
     return 0
 

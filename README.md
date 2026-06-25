@@ -59,8 +59,8 @@ Docs 01–04 below are the detailed references.
 `cdl_map`, compile-verified with real CC5X (PIC16F15244: 60 B RAM / 465 code words).
 The **STM32F042K6 probe firmware** cross-compiles clean (`firmware/probe-f042/`,
 arm-none-eabi-gcc, zero warnings, host-tested) for **both** PC-link transports:
-**P5a** ST-LINK VCP (2336 B flash / 2152 B RAM) and **P5b** native USB-CDC (4572 B
-flash / 2240 B of 6 KB RAM) — the bare-metal F042 USB FS device + CDC-ACM driver is
+**P5a** ST-LINK VCP (2336 B flash / 2152 B RAM) and **P5b** native USB-CDC (4792 B
+flash / 2248 B of 6 KB RAM) — the bare-metal F042 USB FS device + CDC-ACM driver is
 RM0091-cited and descriptor-unit-tested, pending hardware bench. Remaining work
 (single-source protocol/codec, the CI compile-and-measure gate, the `debug-monitor`
 PC tool) is sequenced in [00-master-plan.md](00-master-plan.md) §5. Host-side pieces
