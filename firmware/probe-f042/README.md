@@ -2,7 +2,8 @@
 
 Fixed, target-family-independent probe firmware. See the design docs in
 `../../00-master-plan.md` (§ P5a/P5b) and `HARDWARE.md` for the verified,
-datasheet-sourced hardware spec.
+datasheet-sourced hardware spec. To take it to the bench, follow the turnkey
+[`BRINGUP.md`](BRINGUP.md) runbook (build → flash → enumerate → validate).
 
 ## What this does
 ```
