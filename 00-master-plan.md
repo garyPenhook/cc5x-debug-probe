@@ -70,13 +70,18 @@ breakpoints, silicon single-step, or zero overhead (the probe effect is real).
 - Measured budget, PIC16F15244 Tier-A-full: **60 B RAM / 465 code words (11%)**.
 - 283 tests pass; flake8 clean; code-reviewed (5 real bugs fixed).
 
-**Remaining** (→ roadmap phase): ~~single-source `cdl_proto`/codec (P1)~~ **done**;
-compile-and-measure gate + symbol-map population (P2); baud-via-MCP wiring (P3); `debug-monitor`
-(P4); STM32 firmware (**P5a + P5b both build clean** — relay+init+native USB-CDC,
-zero warnings; P5a VCP 2336 B flash / 2152 B RAM, P5b USB-CDC 4792 B flash / 2248 B
-of 6 KB RAM; all T-001 checks verified, descriptors host-tested, pending bench);
-end-to-end (P6); Tier-B bit-bang, Tier-C pulse-width/-train, target-tick,
-WRITE_MEM+blacklist, bank-crossing read, READ_PGM, compression (P7).
+**Done** (all CI-gated, no hardware): ~~single-source `cdl_proto`/codec (P1)~~,
+~~compile-and-measure gate + symbol-map population (P2)~~, ~~baud-via-MCP (P3)~~,
+~~`debug-monitor` (P4)~~ — all merged to `cc5x-helper@main`. WRITE_MEM+blacklist
+also landed early (was P7).
+
+**Remaining**: STM32 firmware (**P5a + P5b both build clean** — relay+init+native
+USB-CDC, zero warnings; P5a VCP 2336 B flash / 2152 B RAM, P5b USB-CDC 4792 B flash /
+2248 B of 6 KB RAM; all T-001 checks verified, descriptors host-tested, **pending
+hardware bench**); end-to-end (P6, needs hardware); Tier-B bit-bang, Tier-C
+pulse-width/-train, target-tick, bank-crossing read, READ_PGM, compression, 16-bit
+BRG (P7). The remaining work is **hardware-gated** — it needs the NUCLEO-F042K6 +
+a PIC target on the bench.
 
 ## 5. Roadmap (CI-gated; P0–P4 need no hardware)
 
@@ -84,9 +89,9 @@ WRITE_MEM+blacklist, bank-crossing read, READ_PGM, compression (P7).
 |---|---|---|
 | **P0** | Master doc + reconcile 01–04 (this) | Docs internally consistent |
 | **P1 ✅** | **Done** ([design](05-cdl-proto-codec.md)): `cdl_proto.py` single-source spec + `cdl_codec.py` codec + `cdl_protogen.py` shared `cdl_proto.h` emitter; `debuggen` imports the spec (generated stub/map byte-identical). Lives in `cc5x-helper` (branch `p1-cdl-proto-codec`). Follow-on: stub `#include`s the generated `cdl_proto.h`. | ✅ Codec round-trips every message + recovery; golden `0xF0` frame byte-matches the probe firmware; shared `#define` block proven non-drifting; 305 tests, flake8 clean |
-| **P2** | Compile-and-measure gate (CC5X only): build stubs for roomy/512 B/256 B parts, parse `.occ/.var/.asm/.fcs`, populate `cdl_map.symbols`, confirm/demote tier | CI green via CrossOver runner; map symbols filled; [02 §6](02-target-footprint.md) closed |
-| **P3** | Baud via Microchip MCP: codegen computes SPBRG from `fosc`+baud, cites the datasheet URL; `brg` override kept | Unit test pins SPBRG to a known Fosc/baud table row |
-| **P4** | `debug-monitor` PC command (decode + map + commands) | Decodes canned frames + renders named trace in CI |
+| **P2 ✅** | **Done**: compile-and-measure gate (CC5X), parse `.occ/.var/.asm/.fcs`, populate `cdl_map.symbols`, confirm/demote tier. Merged to `cc5x-helper@main` (#6). | CI green; map symbols filled; [02 §6](02-target-footprint.md) closed |
+| **P3 ✅** | **Done**: `brg.py` derives SPBRG (8-bit, picks BRGH) from `transport.fosc`+`baud` via the EUSART BRG formula confirmed from the Microchip MCP (provenance URL in the stub comment + `cdl_map.baud`); manual `transport.brg` override kept. 16-bit BRG deferred. | ✅ `test_brg` pins SPBRG to datasheet rows (e.g. 32 MHz/9600→51 BRGH=0, 32 MHz/115200→16 BRGH=1) |
+| **P4 ✅** | **Done**: `debug-monitor` PC command (two-layer RELAY decode + map + named trace + command encode). Merged to `cc5x-helper@main` (#7). | ✅ Decodes canned frames + renders named trace in CI |
 | **P5a** | STM32F042K6 firmware bench bring-up (CMake+HAL/LL): target USART1 (PA9/PA10) → TIM2 timestamp → relay to **ST-LINK VCP** (USART2 PA2/PA15). No native-USB wiring needed | Relays + timestamps target frames to a PC terminal over the ST-LINK Virtual COM; LED (PB3) heartbeat |
 | **P5b** | Swap PC transport to **native USB-CDC** on PA11/PA12; wire USB breakout to CN3-D10/D2. **Built:** bare-metal F042 USB FS device + CDC-ACM driver (`usb_cdc.c`/`usb_desc.c`), RM0091-cited, descriptor-unit-tested, compile-time `PROBE_PC_TRANSPORT` switch; cross-builds clean (4792 B flash / 2248 B of 6 KB SRAM). **Pending:** bench enumeration. | Enumerates as CDC; forwards + timestamps frames; buffers fit 6 KB SRAM |
 | **P6** | End-to-end slice on PIC16F15244: trace → READ_MEM → breakpoints | Live timestamped trace; mem peek; bp stop/continue |

@@ -112,5 +112,5 @@ that unit tests can't exercise.
 - VCP (P5a): relay ring (`s_data[512]` + 32-entry mark ring) + 256 B VCP FIFO ≈
   **2152 B (35%)**.
 - USB-CDC (P5b): relay ring + 256 B USB TX FIFO + descriptor scratch + EP state ≈
-  **2240 B (36%)**. PMA buffers (≈328 B) live in the dedicated USB SRAM, not the
+  **2248 B (37%)**. PMA buffers (≈328 B) live in the dedicated USB SRAM, not the
   6 KB system SRAM. Plenty of headroom; tighten `RING_SIZE` only if needed.
