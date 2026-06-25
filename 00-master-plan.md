@@ -81,7 +81,9 @@ USB-CDC, zero warnings; P5a VCP 2336 B flash / 2152 B RAM, P5b USB-CDC 4792 B fl
 hardware bench**); end-to-end (P6, needs hardware); Tier-B bit-bang, Tier-C
 pulse-width/-train, target-tick, bank-crossing read, READ_PGM, compression, 16-bit
 BRG (P7). The remaining work is **hardware-gated** — it needs the NUCLEO-F042K6 +
-a PIC target on the bench.
+a PIC target on the bench. The bench steps are turnkey: see the
+[bring-up runbook](firmware/probe-f042/BRINGUP.md) (flash commands, enumeration +
+trace pass/fail criteria for P5a/P5b/P6; pre-bench host gates all green).
 
 ## 5. Roadmap (CI-gated; P0–P4 need no hardware)
 
