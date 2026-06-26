@@ -79,8 +79,8 @@ also landed early (was P7).
 USB-CDC, zero warnings; P5a VCP 2336 B flash / 2152 B RAM, P5b USB-CDC 4792 B flash /
 2248 B of 6 KB RAM; all T-001 checks verified, descriptors host-tested, **pending
 hardware bench**); end-to-end (P6, needs hardware); Tier-B bit-bang, Tier-C
-pulse-width/-train, target-tick, bank-crossing read, READ_PGM, compression, 16-bit
-BRG (P7). The remaining work is **hardware-gated** — it needs the NUCLEO-F042K6 +
+pulse-width/-train, target-tick, bank-crossing read, READ_PGM, compression (P7).
+16-bit BRG landed early (was P7; see P3). The remaining work is **hardware-gated** — it needs the NUCLEO-F042K6 +
 a PIC target on the bench. The bench steps are turnkey: see the
 [bring-up runbook](firmware/probe-f042/BRINGUP.md) (flash commands, enumeration +
 trace pass/fail criteria for P5a/P5b/P6; pre-bench host gates all green).
@@ -92,7 +92,7 @@ trace pass/fail criteria for P5a/P5b/P6; pre-bench host gates all green).
 | **P0** | Master doc + reconcile 01–04 (this) | Docs internally consistent |
 | **P1 ✅** | **Done** ([design](05-cdl-proto-codec.md)): `cdl_proto.py` single-source spec + `cdl_codec.py` codec + `cdl_protogen.py` shared `cdl_proto.h` emitter; `debuggen` imports the spec (generated stub/map byte-identical). Lives in `cc5x-helper` (branch `p1-cdl-proto-codec`). Follow-on: stub `#include`s the generated `cdl_proto.h`. | ✅ Codec round-trips every message + recovery; golden `0xF0` frame byte-matches the probe firmware; shared `#define` block proven non-drifting; 305 tests, flake8 clean |
 | **P2 ✅** | **Done**: compile-and-measure gate (CC5X), parse `.occ/.var/.asm/.fcs`, populate `cdl_map.symbols`, confirm/demote tier. Merged to `cc5x-helper@main` (#6). | CI green; map symbols filled; [02 §6](02-target-footprint.md) closed |
-| **P3 ✅** | **Done**: `brg.py` derives SPBRG (8-bit, picks BRGH) from `transport.fosc`+`baud` via the EUSART BRG formula confirmed from the Microchip MCP (provenance URL in the stub comment + `cdl_map.baud`); manual `transport.brg` override kept. 16-bit BRG deferred. | ✅ `test_brg` pins SPBRG to datasheet rows (e.g. 32 MHz/9600→51 BRGH=0, 32 MHz/115200→16 BRGH=1) |
+| **P3 ✅** | **Done**: `brg.py` derives SPBRG from `transport.fosc`+`baud` via the EUSART BRG formula confirmed from the Microchip MCP (provenance URL in the stub comment + `cdl_map.baud`); manual `transport.brg` override kept. **16-bit BRG done** (was P7): escalates to BRG16=1 (loads SPxBRGH + sets BRG16 in BAUDxCON) only when the 8-bit divisor overflows or exceeds tolerance and the device exposes the bit, so 8-bit-reachable rates resolve byte-identically. | ✅ `test_brg` pins SPBRG to datasheet rows (8-bit: 32 MHz/9600→51 BRGH=0, 32 MHz/115200→16 BRGH=1; 16-bit: 32 MHz/300→26666 BRG16=1/BRGH=1, 2400→3332) |
 | **P4 ✅** | **Done**: `debug-monitor` PC command (two-layer RELAY decode + map + named trace + command encode). Merged to `cc5x-helper@main` (#7). | ✅ Decodes canned frames + renders named trace in CI |
 | **P5a** | STM32F042K6 firmware bench bring-up (CMake+HAL/LL): target USART1 (PA9/PA10) → TIM2 timestamp → relay to **ST-LINK VCP** (USART2 PA2/PA15). No native-USB wiring needed | Relays + timestamps target frames to a PC terminal over the ST-LINK Virtual COM; LED (PB3) heartbeat |
 | **P5b** | Swap PC transport to **native USB-CDC** on PA11/PA12; wire USB breakout to CN3-D10/D2. **Built:** bare-metal F042 USB FS device + CDC-ACM driver (`usb_cdc.c`/`usb_desc.c`), RM0091-cited, descriptor-unit-tested, compile-time `PROBE_PC_TRANSPORT` switch; cross-builds clean (4792 B flash / 2248 B of 6 KB SRAM). **Pending:** bench enumeration. | Enumerates as CDC; forwards + timestamps frames; buffers fit 6 KB SRAM |
@@ -109,11 +109,16 @@ including the formula table and a citable `onlinedocs.microchip.com` URL:
 |---|---|---|---|---|
 | 0 | 0 | 0 | 8-bit async | Fosc / [64 (n+1)] |
 | 0 | 0 | 1 | 8-bit async | Fosc / [16 (n+1)] |
+| 0 | 1 | 0 | 16-bit async | Fosc / [16 (n+1)] |
 | 0 | 1 | 1 | 16-bit async | Fosc / [4 (n+1)] |
 
-`n` = SPBRGH:SPBRGL. Codegen picks the mode that minimizes error for the requested
-Fosc/baud, emits `CDL_SPBRG_VALUE` (and BRGH/BRG16), and records the source URL in a
-comment + the `cdl_map`. **The formula/value always comes from the MCP, never memory.**
+`n` = SPBRGH:SPBRGL (8-bit: SPBRGL only, n ≤ 255; 16-bit: the full pair, n ≤ 65535).
+Codegen picks the mode that minimizes error for the requested Fosc/baud, preferring
+the 8-bit divisor and escalating to 16-bit (BRG16=1) only when 8-bit overflows or
+misses tolerance; it emits `CDL_SPBRG_VALUE` (plus `CDL_SPBRGH_VALUE` + the BAUDxCON
+BRG16 write in 16-bit mode) and records the source URL in a comment + the `cdl_map`.
+All four rows above are confirmed from the same MCP doc (GUID-E0612FCE…, §24.3).
+**The formula/value always comes from the MCP, never memory.**
 
 ## 7. Open items (track to closure)
 
